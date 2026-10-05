@@ -8,7 +8,7 @@ export function nodeSubtitle(board: Board, c: Component): string {
     case 'alb':
       return `${cfg.listener.protocol}:${cfg.listener.port} → ${ref(cfg.targetId)}`;
     case 'asg':
-      return `${cfg.desired}× ${cfg.instanceType} (${cfg.min}-${cfg.max})`;
+      return `${cfg.desired}× ${cfg.instanceType} (${cfg.min}-${cfg.max})${cfg.purchase && cfg.purchase.spotPercent > 0 ? ` · Spot ${cfg.purchase.spotPercent}% above ${cfg.purchase.onDemandBase}` : ''}`;
     case 'ec2':
       return `${cfg.instanceType}${cfg.publicIp ? ' · public IP' : ''}`;
     case 'rds':
@@ -65,5 +65,9 @@ export function nodeSubtitle(board: Board, c: Component): string {
       return `${cfg.schedule} → ${ref(cfg.destId)}`;
     case 'dms':
       return `${cfg.mode} → ${ref(cfg.targetId)}`;
+    case 'savings':
+      return cfg.plan === 'compute-sp' || cfg.plan === 'ec2-instance-sp'
+        ? `${cfg.plan === 'compute-sp' ? 'Compute SP' : `EC2 Instance SP (${cfg.instanceType.split('.')[0]})`} · $${cfg.hourlyCommit}/h · ${cfg.termYears} y`
+        : `${cfg.count}× ${cfg.instanceType} ${cfg.plan === 'standard-ri' ? 'Standard' : 'Convertible'} RI · ${cfg.termYears} y`;
   }
 }

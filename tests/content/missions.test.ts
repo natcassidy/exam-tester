@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { ALL_MISSIONS, MISSIONS } from '../../src/content/missions';
 import { QUESTION_BY_ID, QUESTIONS } from '../../src/content/questions';
+import { TASKS } from '../../src/content/concepts';
+import { DOMAIN_ORDER, DOMAIN_WEIGHTS } from '../../src/engine/mastery/exam';
 import { CONCEPT_BY_ID } from '../../src/content/concepts';
 import { createBoardFromLayout } from '../../src/engine/board';
 import { runMission } from '../../src/engine/sim/runner';
@@ -53,14 +55,39 @@ describe.each(ALL_MISSIONS.map((m) => [m.id, m] as const))('content of %s', (_id
 });
 
 describe('question bank', () => {
-  it('has 90+ questions with every option explained', () => {
-    expect(QUESTIONS.length).toBeGreaterThanOrEqual(90);
+  it('has 150+ questions with every option explained', () => {
+    expect(QUESTIONS.length).toBeGreaterThanOrEqual(150);
     for (const q of QUESTIONS) {
       for (const c of q.concepts) expect(CONCEPT_BY_ID[c], `${q.id} → ${c}`).toBeDefined();
       for (const o of q.options) expect(o.why.length, `${q.id}/${o.id}`).toBeGreaterThan(10);
       for (const c of q.correct) expect(q.options.some((o) => o.id === c), `${q.id} correct ${c}`).toBe(true);
     }
     expect(new Set(QUESTIONS.map((q) => q.id)).size).toBe(QUESTIONS.length);
+  });
+
+  it('is balanced like the exam: each domain within 2 points of its SAA-C03 weight', () => {
+    for (const d of DOMAIN_ORDER) {
+      const share = QUESTIONS.filter((q) => q.domain === d).length / QUESTIONS.length;
+      expect(Math.abs(share - DOMAIN_WEIGHTS[d]), `${d}: ${(share * 100).toFixed(1)}%`).toBeLessThanOrEqual(0.02);
+    }
+  });
+
+  it('every concept has at least one question (so "Practice this" always works)', () => {
+    for (const c of Object.values(CONCEPT_BY_ID)) expect(QUESTIONS.some((q) => q.concepts.includes(c.id)), c.id).toBe(true);
+  });
+
+  it('multi-answer questions say how many to choose', () => {
+    for (const q of QUESTIONS.filter((x) => x.correct.length > 1)) expect(q.stem, q.id).toMatch(/\((Choose|Select) (TWO|THREE)\.?\)/i);
+  });
+});
+
+describe('concepts', () => {
+  it("each concept's domain matches its exam task statement", () => {
+    for (const c of Object.values(CONCEPT_BY_ID)) {
+      const task = TASKS.find((t) => t.id === c.task);
+      expect(task, `${c.id} → task ${c.task}`).toBeDefined();
+      expect(task!.domain, c.id).toBe(c.domain);
+    }
   });
 });
 

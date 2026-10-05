@@ -10,6 +10,45 @@ import { resolveEndpoint } from '../../engine/select';
 import type { IncidentScore } from '../../engine/incident/score';
 import { listSuspects } from '../../engine/incident/suspects';
 import type { Mission } from '../../engine/model';
+import type { RefactorScore } from '../../engine/scoring';
+import { DEFENDS } from '../../content/defend';
+import { MISSION_BY_ID } from '../../content/missions';
+
+const usd = (n: number) => `$${Math.round(n).toLocaleString()}`;
+
+function RefactorReport({ rs }: { rs: RefactorScore }) {
+  const saved = rs.startCost - rs.cost;
+  return (
+    <article className="result report" style={{ gridColumn: '1 / -1' }}>
+      <div className="result-head">
+        <h4>Refactor report</h4>
+        <Stars n={rs.stars} />
+        <span className="mono">{rs.points}/100</span>
+      </div>
+      <div className="report-row">
+        <span className={`tag ${rs.allPass ? 'pass' : 'fail'}`}>
+          {rs.passed}/{rs.total}
+        </span>
+        <b>Requirements</b>
+        <span className="hint">{rs.allPass ? 'Every requirement still holds after the change.' : 'A cheaper design that breaks a requirement earns no savings points.'}</span>
+      </div>
+      <div className="report-row">
+        <span className={`tag ${rs.savingsRatio >= 0.95 ? 'pass' : rs.savingsRatio >= 0.5 ? 'warn' : 'fail'}`}>{Math.round(rs.savingsRatio * 100)}%</span>
+        <b>Savings</b>
+        <span className="hint">
+          {usd(rs.startCost)}/mo → {usd(rs.cost)}/mo ({saved >= 0 ? `${usd(saved)} saved` : `${usd(-saved)} more`}). The reference design costs {usd(rs.targetCost)}/mo.
+        </span>
+      </div>
+      <div className="cost-bar" aria-hidden>
+        <span className="target" style={{ width: `${Math.min(100, (rs.targetCost / Math.max(rs.startCost, rs.cost, 1)) * 100)}%` }} />
+        <span className="now" style={{ width: `${Math.min(100, (rs.cost / Math.max(rs.startCost, rs.cost, 1)) * 100)}%` }} />
+      </div>
+      <div className="hint">
+        <span style={{ color: 'var(--accent)' }}>■</span> your design · <span style={{ color: 'var(--pass)' }}>■</span> reference design · full width = the more expensive of production and yours
+      </div>
+    </article>
+  );
+}
 
 function IncidentReport({ mission, report }: { mission: Mission; report: IncidentScore }) {
   const inc = mission.incident!;
@@ -63,18 +102,24 @@ function metricChip(r: EventResult): string | null {
   return null;
 }
 
-function ResultCard({ ev, r }: { ev: EventSpec; r: EventResult }) {
+function ResultCard({ ev, r, missionId, surprise }: { ev: EventSpec; r: EventResult; missionId: string; surprise?: boolean }) {
   const [open, setOpen] = useState(r.status !== 'pass');
   const board = useGame((s) => s.board());
   const select = useGame((s) => s.select);
   const showTrace = useGame((s) => s.showTrace);
   const openManual = useGame((s) => s.openManual);
   const openTrace = useGame((s) => s.openTrace);
+  const openDefend = useGame((s) => s.openDefend);
+  const defended = useGame((s) => !!s.defends[`${missionId}/${ev.id}`]);
+  // A refactor's prompts are about the new design, so they open once every requirement passes.
+  const refactorPending = useGame((s) => !!MISSION_BY_ID[missionId]?.refactor && !s.refactorScores[missionId]?.allPass);
+  const canDefend = !!DEFENDS[`${missionId}/${ev.id}`] && !refactorPending;
   const fix = fixSelection(r.fixTarget, board);
   const chip = metricChip(r);
   return (
-    <article className={`result ${r.status}`}>
+    <article className={`result ${r.status}${surprise ? ' surprise' : ''}`}>
       <div className="result-head">
+        {surprise && <span className="tag accent">SURPRISE</span>}
         <span className={`tag ${r.status}`}>{r.status.toUpperCase()}</span>
         <h4>{ev.name}</h4>
         {chip && <span className="tag muted mono">{chip}</span>}
@@ -134,6 +179,11 @@ function ResultCard({ ev, r }: { ev: EventSpec; r: EventResult }) {
             Fix it
           </button>
         )}
+        {canDefend && r.status === 'pass' && (
+          <button className="btn small" onClick={() => openDefend({ missionId, eventId: ev.id })} title="Explain in your own words why your design passes">
+            {defended ? '✓ Defend again' : 'Defend it'}
+          </button>
+        )}
         {r.manual.slice(0, 3).map((id) => (
           <button key={id} className="btn small ghost" onClick={() => openManual(id)}>
             ☰ {manualTitle(id)}
@@ -153,7 +203,9 @@ export function SimDrawer() {
   const openQuestions = useGame((s) => s.openQuestions);
   const report = useGame((s) => s.reports[mission.id]);
   const diagnosis = useGame((s) => s.incident().diagnosis);
-  const score = results ? scoreResults(mission.events, results) : null;
+  const refactor = useGame((s) => s.refactorScores[mission.id]);
+  const surprise = useGame((s) => s.surprise[mission.id]);
+  const score = results && !refactor ? scoreResults(mission.events, results) : null;
   const isIncident = !!mission.incident;
   return (
     <section className={`drawer ${open ? '' : 'closed'}`} aria-label="Simulation">
@@ -163,6 +215,14 @@ export function SimDrawer() {
           <span className="score">
             <Stars n={report.stars} />
             <span className="hint">{report.total}/100</span>
+          </span>
+        )}
+        {refactor && (
+          <span className="score">
+            <Stars n={refactor.stars} />
+            <span className="hint">
+              {refactor.passed}/{refactor.total} passed · {usd(refactor.cost)}/mo · {refactor.points} pts
+            </span>
           </span>
         )}
         {!isIncident && score && (
@@ -195,11 +255,13 @@ export function SimDrawer() {
             </p>
           )}
           {report && <IncidentReport mission={mission} report={report} />}
+          {refactor && <RefactorReport rs={refactor} />}
           {results &&
             mission.events.map((ev) => {
               const r = results.find((x) => x.eventId === ev.id);
-              return r ? <ResultCard key={ev.id + r.status + r.summary} ev={ev} r={r} /> : null;
+              return r ? <ResultCard key={ev.id + r.status + r.summary} ev={ev} r={r} missionId={mission.id} /> : null;
             })}
+          {results && surprise?.result && <ResultCard key={`surprise${surprise.result.status}${surprise.result.summary}`} ev={surprise.event} r={surprise.result} missionId={mission.id} surprise />}
           {score && !isIncident && (
             <div className="result" style={{ borderLeftColor: 'var(--accent)' }}>
               <div className="result-head">

@@ -1,6 +1,8 @@
 import type { Board, Component, CostLineItem, UsageProfile } from '../model';
-import { HOURS_PER_MONTH as H, PRICING as P, S3_CLASSES } from './pricing';
-import { regionOf, subnetsOf } from '../board';
+import { AURORA_QPS_PER_ACU, HOURS_PER_MONTH as H, PRICING as P, S3_CLASSES, SPOT_PRICE_RATIO } from './pricing';
+import { applyCommitments, asgMix, boardEc2Usage, commitmentsOf, PLAN_LABEL } from './commitments';
+import { componentsOfType, regionOf, subnetsOf } from '../board';
+import { committedHourly as committedHourlyOf } from './commitments';
 import { tgwAttachments } from '../net/trace';
 import { traceFlow } from '../net/trace';
 import { resolveEndpoint, resolveRef } from '../select';
@@ -16,7 +18,7 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
 export function estimateCost(board: Board, usage: UsageProfile): CostEstimate {
   const items: CostLineItem[] = [];
   const add = (service: string, item: string, monthly: number, componentId?: string) => {
-    if (monthly > 0.004) items.push({ service, item, monthly: r2(monthly), componentId });
+    if (monthly > 0.004 || monthly < -0.004) items.push({ service, item, monthly: r2(monthly), componentId });
   };
   const comps = Object.values(board.components);
   const avgRps = usage.requestsPerMonth / (H * 3600);
@@ -33,10 +35,16 @@ export function estimateCost(board: Board, usage: UsageProfile): CostEstimate {
         add('EC2', `${c.name}: 1 × ${cfg.instanceType}`, P.ec2Hourly[cfg.instanceType] * H, c.id);
         if (cfg.publicIp) publicIps += 1;
         break;
-      case 'asg':
-        add('EC2', `${c.name}: ${cfg.desired} × ${cfg.instanceType} (desired capacity, on-demand)`, cfg.desired * P.ec2Hourly[cfg.instanceType] * H, c.id);
+      case 'asg': {
+        const mix = asgMix(cfg);
+        if (!cfg.purchase) add('EC2', `${c.name}: ${cfg.desired} × ${cfg.instanceType} (desired capacity, on-demand)`, cfg.desired * P.ec2Hourly[cfg.instanceType] * H, c.id);
+        else {
+          add('EC2', `${c.name}: ${mix.onDemand} × ${cfg.instanceType} On-Demand`, mix.onDemand * P.ec2Hourly[cfg.instanceType] * H, c.id);
+          add('EC2', `${c.name}: ${mix.spot} Spot instance(s) (~${Math.round((1 - SPOT_PRICE_RATIO) * 100)}% below On-Demand, price varies)`, mix.spot * P.ec2Hourly[cfg.instanceType] * SPOT_PRICE_RATIO * H, c.id);
+        }
         if (cfg.publicIp) publicIps += cfg.desired;
         break;
+      }
       case 'alb': {
         const lcus = Math.max(1, avgRps / 25, usage.dataOutGb / (H * 1));
         add('ELB', `${c.name}: ALB hours`, P.albHourly * H, c.id);
@@ -96,7 +104,8 @@ export function estimateCost(board: Board, usage: UsageProfile): CostEstimate {
       case 'aurora': {
         const instances = 1 + cfg.readers;
         if (cfg.serverlessV2) {
-          const acu = Math.max(cfg.minAcu, cfg.maxAcu / 4);
+          // With a known average load, capacity follows it (at ~70% utilisation); otherwise assume a quarter of max.
+          const acu = usage.dbAvgQps !== undefined ? Math.min(cfg.maxAcu, Math.max(cfg.minAcu, Math.round((usage.dbAvgQps / AURORA_QPS_PER_ACU / 0.7) * 2) / 2)) : Math.max(cfg.minAcu, cfg.maxAcu / 4);
           add('Aurora', `${c.name}: Serverless v2, ~${acu} ACU average × ${instances} instance(s)`, acu * P.auroraAcuHourly * H * instances, c.id);
         } else add('Aurora', `${c.name}: ${instances} × ${cfg.instanceClass} (writer${cfg.readers ? ` + ${cfg.readers} reader(s)` : ''})`, instances * P.auroraHourly[cfg.instanceClass] * H, c.id);
         if (!cfg.globalPrimaryId) add('Aurora', `${c.name}: ${(usage.rdsStorageGb ?? 100).toLocaleString()} GB cluster storage`, (usage.rdsStorageGb ?? 100) * P.auroraStorageGbMonth, c.id);
@@ -222,6 +231,15 @@ export function estimateCost(board: Board, usage: UsageProfile): CostEstimate {
         if (natAz && subnet && natAz !== subnet.azId) add('Data transfer', `Cross-AZ: ${subnet.name} → ${nat!.name}`, share * P.crossAzPerGbEachWay * 2, nat!.id);
       }
     }
+  }
+
+  // Savings Plans / Reserved Instances: pay the commitment, minus the On-Demand usage it covers.
+  const commits = commitmentsOf(board);
+  if (commits.length) {
+    const hour = applyCommitments(commits, { ec2: boardEc2Usage(board), lambdaOdHourly: 0 });
+    const covered = hour.onDemand - (hour.cost - hour.committed);
+    for (const c of componentsOfType(board, 'savings')) add('Commitments', `${c.name}: ${PLAN_LABEL[c.config.plan]}, ${c.config.termYears}-year term`, committedHourlyOf(c.config) * H, c.id);
+    add('Commitments', 'On-Demand usage covered by commitments', -covered * H);
   }
 
   if (publicIps) add('VPC', `${publicIps} public IPv4 address(es)`, publicIps * P.publicIpv4Hourly * H);

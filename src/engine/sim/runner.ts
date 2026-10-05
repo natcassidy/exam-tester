@@ -15,6 +15,8 @@ import { connectivity } from './events/connectivity';
 import { globalLatency } from './events/globalLatency';
 import { storageLifecycle } from './events/storageLifecycle';
 import { streamIngest } from './events/streamIngest';
+import { spotReclaim } from './events/spotReclaim';
+import { commitment } from './events/commitment';
 
 const HANDLERS: Record<EventKind, EventHandler> = {
   reachability,
@@ -32,6 +34,8 @@ const HANDLERS: Record<EventKind, EventHandler> = {
   globalLatency,
   storageLifecycle,
   streamIngest,
+  spotReclaim,
+  commitment,
 };
 
 export function runEvent(board: Board, ev: EventSpec, ctx: SimContext): EventResult {

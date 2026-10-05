@@ -12,6 +12,8 @@ export const PRICING = {
     't3.medium': 0.0416,
     't3.large': 0.0832,
     'm5.large': 0.096,
+    'm5a.large': 0.086,
+    'm6i.large': 0.096,
     'c5.large': 0.085,
     'm5.xlarge': 0.192,
   } as Record<InstanceType, number>,
@@ -107,6 +109,8 @@ export const INSTANCE_RPS_AT_70: Record<InstanceType, number> = {
   't3.medium': 200,
   't3.large': 400,
   'm5.large': 450,
+  'm5a.large': 430,
+  'm6i.large': 480,
   'c5.large': 500,
   'm5.xlarge': 900,
 };
@@ -117,6 +121,39 @@ export const DB_CAPACITY: Record<DbInstanceClass, { qps: number; maxConnections:
   'db.t3.medium': { qps: 2000, maxConnections: 410 },
   'db.r5.large': { qps: 6000, maxConnections: 1600 },
   'db.r5.xlarge': { qps: 12000, maxConnections: 3300 },
+};
+
+// ----- Stage 4: purchase options -----
+
+/**
+ * Spot price as a share of the On-Demand price. Spot prices float with supply and demand; for
+ * m5/c5/t3 in us-east-1 they typically sit 60-70% below On-Demand.
+ */
+export const SPOT_PRICE_RATIO = 0.35;
+
+/**
+ * Discount off On-Demand for a 1- or 3-year term, No Upfront, Linux, us-east-1 (approximate).
+ * AWS quotes "up to" 66% (Compute SP), 72% (EC2 Instance SP / Standard RI) and 66% (Convertible RI)
+ * for 3-year All Upfront; No Upfront terms are lower.
+ */
+export const COMMIT_DISCOUNT: Record<'compute-sp' | 'ec2-instance-sp' | 'standard-ri' | 'convertible-ri', Record<1 | 3, number>> = {
+  'compute-sp': { 1: 0.28, 3: 0.5 },
+  'ec2-instance-sp': { 1: 0.37, 3: 0.57 },
+  'standard-ri': { 1: 0.37, 3: 0.57 },
+  'convertible-ri': { 1: 0.31, 3: 0.52 },
+};
+
+/** Compute Savings Plans also cover Lambda, at a smaller discount. */
+export const COMPUTE_SP_LAMBDA_DISCOUNT: Record<1 | 3, number> = { 1: 0.12, 3: 0.17 };
+
+/** Aurora Serverless v2: queries per second one ACU (~2 GiB) handles in the capacity model. */
+export const AURORA_QPS_PER_ACU = 750;
+
+/** Aurora provisioned instance capacity in the capacity model. */
+export const AURORA_CAPACITY: Record<string, { qps: number }> = {
+  'db.r6g.large': { qps: 6000 },
+  'db.r6g.xlarge': { qps: 12000 },
+  'db.r6g.2xlarge': { qps: 24000 },
 };
 
 export const LAMBDA_ACCOUNT_CONCURRENCY = 1000;

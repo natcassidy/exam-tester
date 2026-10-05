@@ -43,7 +43,13 @@ export function lifecycleCost(cfg: ConfigOf<'s3'>, p: StorageLifecycleParams, ho
     const cls = classAt(cfg, day);
     const c = S3_CLASSES[cls];
     let gbMonth = c.gbMonth;
-    if (cls === 'INTELLIGENT_TIERING') gbMonth = day < 30 ? 0.023 : day < 90 ? S3_INTELLIGENT.infrequentGbMonth : S3_INTELLIGENT.archiveInstantGbMonth;
+    // Intelligent-Tiering moves objects down after 30 / 90 days without access, and back to the
+    // frequent tier when read: roughly the share read each month sits in the frequent tier.
+    if (cls === 'INTELLIGENT_TIERING') {
+      const cold = day < 30 ? 0.023 : day < 90 ? S3_INTELLIGENT.infrequentGbMonth : S3_INTELLIGENT.archiveInstantGbMonth;
+      const hot = Math.min(1, readPct(day) / 100);
+      gbMonth = hot * 0.023 + (1 - hot) * cold;
+    }
     add(`Storage: ${c.label}`, p.monthlyNewGb * gbMonth * span);
     if (cls === 'INTELLIGENT_TIERING') add('Intelligent-Tiering monitoring', (objectsPerMonth / 1000) * S3_INTELLIGENT.monitoringPer1kObjects * span);
     add(`Retrievals from ${c.label}`, p.monthlyNewGb * (readPct(day) / 100) * c.retrievalPerGb * span);
@@ -85,7 +91,7 @@ export const storageLifecycle: EventHandler = (board, ev) => {
   const cfg = b.config;
   const schedule = [{ afterDays: 0, toClass: cfg.storageClass ?? 'STANDARD' }, ...[...(cfg.lifecycle ?? [])].sort((a, c) => a.afterDays - c.afterDays)];
   const scheduleLine = { label: 'Lifecycle', value: `${schedule.map((t) => `${fmtAge(t.afterDays)}: ${S3_CLASSES[t.toClass].label}`).join(' → ')}${cfg.expireAfterDays != null ? ` → expire at ${fmtAge(cfg.expireAfterDays)}` : ' → kept forever'}` };
-  const fail = (summary: string, lesson: string, extra: { label: string; value: string; status?: 'pass' | 'fail' }[] = []) => result(ev, { status: 'fail', summary, detail: { lines: [scheduleLine, ...extra] }, lesson, highlight: [b.id], fixTarget: b.id });
+  const fail = (summary: string, lesson: string, extra: { label: string; value: string; status?: 'pass' | 'fail' }[] = [], metrics?: Record<string, number>) => result(ev, { status: 'fail', summary, detail: { lines: [scheduleLine, ...extra] }, lesson, highlight: [b.id], fixTarget: b.id, metrics });
   const pass = (summary: string, lesson: string, extra: { label: string; value: string; status?: 'pass' | 'fail' }[] = [], metrics?: Record<string, number>) => result(ev, { status: 'pass', summary, detail: { lines: [scheduleLine, ...extra] }, lesson, highlight: [], metrics });
 
   if (p.check === 'retrieval') {
@@ -115,6 +121,6 @@ export const storageLifecycle: EventHandler = (board, ev) => {
   const lines = cost.items.map((i) => ({ label: fmtUsd(i.monthly), value: i.item }));
   const totalGb = Math.round(p.monthlyNewGb * (Math.min(horizon, cfg.expireAfterDays ?? horizon) / 30));
   const summary = `Steady state (${totalGb.toLocaleString()} GB stored, every age present): ${fmtUsd(cost.monthly)}/month (approximate) against ${fmtUsd(budget)}.`;
-  if (cost.monthly > budget) return fail(`${summary} ${fmtUsd(cost.monthly - budget)} over.`, `Biggest line: ${cost.items[0]?.item}. Move data down the classes as soon as its access pattern allows, but not into a class whose retrieval time or minimum duration breaks a requirement.`, lines);
+  if (cost.monthly > budget) return fail(`${summary} ${fmtUsd(cost.monthly - budget)} over.`, `Biggest line: ${cost.items[0]?.item}. Move data down the classes as soon as its access pattern allows, but not into a class whose retrieval time or minimum duration breaks a requirement.`, lines, { monthly: cost.monthly, budget });
   return pass(summary, cost.earlyDays ? 'Within budget, but some objects pay minimum-duration charges: check the transition days.' : 'Within budget.', lines, { monthly: cost.monthly, budget });
 };

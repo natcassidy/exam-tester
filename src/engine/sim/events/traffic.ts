@@ -1,9 +1,8 @@
 import type { ConfigOf } from '../../model';
 import { traceFlow, failingHop } from '../../net/trace';
 import { resolveRef } from '../../select';
-import { componentsOfType } from '../../board';
 import { INSTANCE_RPS_AT_70 } from '../../cost/pricing';
-import { dbUtil, demandAt, ProfilePoint, simulateAsg, simulateSyncLambda } from '../capacity';
+import { demandAt, primaryDbUtil, ProfilePoint, simulateAsg, simulateSyncLambda } from '../capacity';
 import { EventHandler, result } from './context';
 
 export interface TrafficParams {
@@ -37,10 +36,10 @@ export const traffic: EventHandler = (board, ev) => {
     const sim = simulateAsg(cfg, p.profile, p.durationMin, { baseLatencyMs: p.baseLatencyMs });
     let dbErrors = 0;
     let peakDb = 0;
-    const db = componentsOfType(board, 'rds')[0];
+    const db = p.db ? primaryDbUtil(board, 0, 0) : null;
     if (p.db && db) {
       for (const pt of sim.points) {
-        const u = dbUtil(db.config as ConfigOf<'rds'>, (pt.demand - pt.errors) * p.db.queriesPerRequest, p.db.readFraction);
+        const u = primaryDbUtil(board, (pt.demand - pt.errors) * p.db.queriesPerRequest, p.db.readFraction)!.util;
         peakDb = Math.max(peakDb, u);
         if (u > 1) {
           const lostShare = 1 - 1 / u;
@@ -65,15 +64,15 @@ export const traffic: EventHandler = (board, ev) => {
       if (sim.maxInstances >= cfg.max && errorRate > p.slo.errorRate) lesson = `The group hit its max capacity (${cfg.max}). ${peak} rps needs about ${Math.ceil(peak / INSTANCE_RPS_AT_70[cfg.instanceType])} instances at 70% CPU. Raise max.`;
       else if (cfg.policy.kind === 'none') lesson = 'No scaling policy: the group never grows. Add target tracking on CPU.';
       else lesson = `New instances only serve after ~60s boot + ${cfg.warmupSec}s warmup. Keep more headroom (a lower target CPU or higher minimum) or scale earlier (scheduled scaling for a known event).`;
-      if (p.db && db && peakDb > 1) lesson = `The database is the bottleneck (${pct(peakDb)} of ${(db.config as ConfigOf<'rds'>).instanceClass} capacity). Add read replicas for reads or a larger instance class.`;
+      if (p.db && db && peakDb > 1) lesson = `The database is the bottleneck (${pct(peakDb)} of ${db.label} capacity). Add read replicas for reads or a larger instance class.`;
     }
     return result(ev, {
       status: ok ? 'pass' : 'fail',
       summary: ok ? `Survived the surge: ${pct(errorRate)} errors, worst p95 ${Math.round(sim.maxP95)} ms, peaked at ${sim.maxInstances} instances.` : `SLO missed: ${pct(errorRate)} errors, worst p95 ${Number.isFinite(sim.maxP95) ? Math.round(sim.maxP95) + ' ms' : 'unbounded'}.`,
       detail: { lines },
       lesson,
-      highlight: ok ? [] : [target.id],
-      fixTarget: target.id,
+      highlight: ok ? [] : [p.db && db && peakDb > 1 ? db.id : target.id],
+      fixTarget: p.db && db && peakDb > 1 ? db.id : target.id,
       timeline: { points: sim.points, marks: sim.marks },
       metrics: { errorRate, p95: sim.maxP95, peakInstances: sim.maxInstances },
     });

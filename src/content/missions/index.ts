@@ -11,6 +11,7 @@ import { invoices } from './invoices';
 import { scans } from './scans';
 import { clickstream } from './clickstream';
 import { migration80 } from './migration80';
+import { REFACTORS } from './refactors';
 import { INCIDENTS } from '../incidents';
 import { DIFFS } from '../diffs';
 
@@ -18,6 +19,6 @@ import { DIFFS } from '../diffs';
 export const STAGE3_MISSIONS: Mission[] = [drRegion, leaderboard, branchOffice, twelveVpcs, invoices, scans, clickstream, migration80];
 /** Build missions: Stage 1, then Stage 3. */
 export const MISSIONS: Mission[] = [portfolio, ledgerly, dropshop, northwind, ...STAGE3_MISSIONS];
-export { INCIDENTS, DIFFS };
-export const ALL_MISSIONS: Mission[] = [...MISSIONS, ...INCIDENTS, ...DIFFS];
+export { INCIDENTS, DIFFS, REFACTORS };
+export const ALL_MISSIONS: Mission[] = [...MISSIONS, ...INCIDENTS, ...DIFFS, ...REFACTORS];
 export const MISSION_BY_ID: Record<string, Mission> = Object.fromEntries(ALL_MISSIONS.map((m) => [m.id, m]));

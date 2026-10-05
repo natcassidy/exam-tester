@@ -72,10 +72,37 @@ export const CONCEPTS: Concept[] = [
   { id: 'messaging-fanout', title: 'Fan-out: SNS, SQS, EventBridge, Kinesis', domain: 'resilient', task: '2.1' },
   { id: 'snow-family', title: 'AWS Snow Family', domain: 'performant', task: '3.5' },
   { id: 'datasync', title: 'AWS DataSync and Storage Gateway', domain: 'performant', task: '3.1' },
-  { id: 'dms', title: 'AWS Database Migration Service', domain: 'resilient', task: '3.3' },
+  { id: 'dms', title: 'AWS Database Migration Service', domain: 'performant', task: '3.3' },
   { id: 'data-migration', title: 'Choosing a migration method', domain: 'performant', task: '3.5' },
   { id: 'block-file-storage', title: 'EBS, EFS and FSx', domain: 'performant', task: '3.1' },
   { id: 'security-services', title: 'Shield, GuardDuty, Macie, Inspector, Secrets Manager', domain: 'secure', task: '1.2' },
+  // ----- Stage 4: refactors and the rest of the exam guide -----
+  { id: 'ec2-spot', title: 'EC2 Spot Instances', domain: 'cost', task: '4.2' },
+  { id: 'ec2-purchase-options', title: 'Savings Plans and Reserved Instances', domain: 'cost', task: '4.2' },
+  { id: 'db-right-sizing', title: 'Right-sizing databases', domain: 'cost', task: '4.3' },
+  { id: 's3-intelligent-tiering', title: 'S3 Intelligent-Tiering', domain: 'cost', task: '4.1' },
+  { id: 'cross-az-costs', title: 'Cross-AZ traffic and AZ affinity', domain: 'cost', task: '4.4' },
+  { id: 'elasticache', title: 'ElastiCache and caching strategies', domain: 'performant', task: '3.3' },
+  { id: 'ecs-fargate', title: 'Containers: ECS, EKS and Fargate', domain: 'performant', task: '3.2' },
+  { id: 'nlb-global-accelerator', title: 'NLB, Gateway Load Balancer and Global Accelerator', domain: 'performant', task: '3.4' },
+];
+
+/** SAA-C03 task statements (exam guide, 2026). */
+export const TASKS: { id: string; domain: Concept['domain']; title: string }[] = [
+  { id: '1.1', domain: 'secure', title: 'Design secure access to AWS resources' },
+  { id: '1.2', domain: 'secure', title: 'Design secure workloads and applications' },
+  { id: '1.3', domain: 'secure', title: 'Determine appropriate data security controls' },
+  { id: '2.1', domain: 'resilient', title: 'Design scalable and loosely coupled architectures' },
+  { id: '2.2', domain: 'resilient', title: 'Design highly available and/or fault-tolerant architectures' },
+  { id: '3.1', domain: 'performant', title: 'Determine high-performing and/or scalable storage solutions' },
+  { id: '3.2', domain: 'performant', title: 'Design high-performing and elastic compute solutions' },
+  { id: '3.3', domain: 'performant', title: 'Determine high-performing database solutions' },
+  { id: '3.4', domain: 'performant', title: 'Determine high-performing and/or scalable network architectures' },
+  { id: '3.5', domain: 'performant', title: 'Determine high-performing data ingestion and transformation solutions' },
+  { id: '4.1', domain: 'cost', title: 'Design cost-optimized storage solutions' },
+  { id: '4.2', domain: 'cost', title: 'Design cost-optimized compute solutions' },
+  { id: '4.3', domain: 'cost', title: 'Design cost-optimized database solutions' },
+  { id: '4.4', domain: 'cost', title: 'Design a cost-optimized network architecture' },
 ];
 
 export const CONCEPT_BY_ID: Record<string, Concept> = Object.fromEntries(CONCEPTS.map((c) => [c.id, c]));

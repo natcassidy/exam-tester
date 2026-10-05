@@ -1,13 +1,22 @@
-import { Fragment, useRef } from 'react';
+import { Fragment, useRef, useState } from 'react';
 import { ALL_MISSIONS } from '../../content/missions';
-import { Mode, modeOf, useGame } from '../../store/game';
+import { streak } from '../../engine/mastery/daily';
+import { dailyComplete, localDay, Mode, modeOf, useGame } from '../../store/game';
+import { Settings } from './Settings';
 
 const MODES: { id: Mode; label: string; short: string }[] = [
   { id: 'build', label: 'Build', short: 'Build' },
   { id: 'incident', label: 'Incidents', short: 'Incidents' },
   { id: 'diff', label: 'Spot the Difference', short: 'Diff' },
+  { id: 'refactor', label: 'Refactor', short: 'Refactor' },
 ];
 import { Stars } from './Abbr';
+
+const DIVIDER: Record<number, { label: string; title: string }> = {
+  2: { label: 'Stage 2', title: 'Stage 2: investigation' },
+  3: { label: 'Breadth', title: 'Stage 3: breadth (multi-Region, hybrid, storage, data)' },
+  4: { label: 'Cost', title: 'Stage 4: refactor for cost' },
+};
 
 export function TopBar() {
   const current = useGame((s) => s.currentMissionId);
@@ -24,6 +33,13 @@ export function TopBar() {
   const importProgress = useGame((s) => s.importProgress);
   const toast = useGame((s) => s.toast);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const openDaily = useGame((s) => s.openDaily);
+  const openMap = useGame((s) => s.openMap);
+  const openExam = useGame((s) => s.openExam);
+  const examRunning = useGame((s) => !!s.currentExam());
+  const todayDone = useGame((s) => dailyComplete(s.daily[localDay()]));
+  const days = useGame((s) => streak(Object.keys(s.daily).filter((d) => dailyComplete(s.daily[d])), localDay()));
 
   const doExport = () => {
     try {
@@ -60,10 +76,10 @@ export function TopBar() {
           <Fragment key={m.id}>
             {i > 0 && m.stage !== missions[i - 1].stage && (
               <span className="chip-divider" aria-hidden>
-                {m.stage === 3 ? 'Breadth' : `Stage ${m.stage}`}
+                {DIVIDER[m.stage]?.label ?? `Stage ${m.stage}`}
               </span>
             )}
-            <button className={`chip ${m.id === current ? 'active' : ''}`} onClick={() => setMission(m.id)} aria-current={m.id === current} title={m.stage === 3 ? 'Stage 3: breadth (multi-Region, hybrid, storage, data)' : undefined}>
+            <button className={`chip ${m.id === current ? 'active' : ''}`} onClick={() => setMission(m.id)} aria-current={m.id === current} title={m.stage > 1 ? DIVIDER[m.stage]?.title : undefined}>
               <span className="n">{String(i + 1).padStart(2, '0')}</span>
               {m.title}
               <Stars n={best[m.id]?.stars ?? 0} />
@@ -72,10 +88,21 @@ export function TopBar() {
         ))}
       </nav>
       <div className="top-actions">
+        <button className={`btn ${todayDone ? '' : 'accent'}`} onClick={() => openDaily(true)} aria-label={days > 0 ? `Today's session, ${days}-day streak` : "Today's session"} title={todayDone ? `Today's session is done. Streak: ${days} day(s)` : "Today's 10-minute session"}>
+          ◷ <span className="label">Today</span>
+          {days > 0 && <span className="streak" aria-hidden>{days}</span>}
+        </button>
+        <button className="btn" onClick={() => openMap('index')} aria-label="Concept map" title="Concept map: mastery per exam domain and task">
+          ◈ <span className="label">Map</span>
+        </button>
+        <button className="btn" onClick={() => openExam(true)} aria-label={examRunning ? 'Practice exam (in progress)' : 'Practice exam'} title={examRunning ? 'Practice exam in progress' : 'Practice exam: 65 questions, 130 minutes'}>
+          ✎ <span className="label">Exam</span>
+          {examRunning && <span className="streak" aria-hidden>…</span>}
+        </button>
         {mode !== 'diff' && (
           <>
-            <button className="btn" onClick={() => openTrace(true)} title="Run an ad-hoc packet trace or simulate an API call">
-              ⟿ <span className="label">Trace</span>
+            <button className="btn" onClick={() => openTrace(true)} title="Run an ad-hoc packet trace or simulate an API call" aria-label="Trace">
+              ⟿ <span className="label opt">Trace</span>
             </button>
             <button
               className="btn"
@@ -83,20 +110,23 @@ export function TopBar() {
                 openTrace(false);
                 select({ kind: 'iam' });
               }}
-              title="Roles, users, KMS keys and SCPs"
+              title="Roles, users, KMS keys and SCPs" aria-label="IAM"
             >
-              ⚿ <span className="label">IAM</span>
+              ⚿ <span className="label opt">IAM</span>
             </button>
           </>
         )}
-        <button className="btn" onClick={() => openManual('index')} title="Field Manual">
-          ☰ <span className="label">Field Manual</span>
+        <button className="btn" onClick={() => openManual('index')} title="Field Manual" aria-label="Field Manual">
+          ☰ <span className="label opt">Field Manual</span>
         </button>
-        <button className="btn ghost" onClick={doExport} title="Export progress to a JSON file">
-          ⇩ <span className="label">Export</span>
+        <button className="btn ghost" onClick={doExport} title="Export progress to a JSON file" aria-label="Export">
+          ⇩ <span className="label opt">Export</span>
         </button>
-        <button className="btn ghost" onClick={() => fileRef.current?.click()} title="Import progress from a JSON file">
-          ⇧ <span className="label">Import</span>
+        <button className="btn ghost" onClick={() => fileRef.current?.click()} title="Import progress from a JSON file" aria-label="Import">
+          ⇧ <span className="label opt">Import</span>
+        </button>
+        <button className="btn ghost" onClick={() => setSettingsOpen(true)} title="Settings" aria-label="Settings">
+          ⚙
         </button>
         <input
           ref={fileRef}
@@ -110,6 +140,7 @@ export function TopBar() {
           }}
         />
       </div>
+      {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} />}
     </header>
   );
 }
