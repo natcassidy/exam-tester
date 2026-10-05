@@ -8,7 +8,7 @@ import type { Board } from '../../src/engine/model';
 import { subnetPublicStatus, findSubnet } from '../../src/engine/net/routing';
 
 const id = (b: Board, name: string) => Object.values(b.components).find((c) => c.name === name)!.id;
-const ok = <T>(r: { ok: true; board: Board; id?: string } | { ok: false; error: string }) => {
+const ok = (r: { ok: true; board: Board; id?: string } | { ok: false; error: string }) => {
   if (!r.ok) throw new Error(r.error);
   return r;
 };

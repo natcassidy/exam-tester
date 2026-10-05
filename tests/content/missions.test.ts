@@ -57,3 +57,20 @@ describe('question bank', () => {
     expect(new Set(QUESTIONS.map((q) => q.id)).size).toBe(QUESTIONS.length);
   });
 });
+
+import { MANUAL } from '../../src/content/manual';
+import { CONCEPTS } from '../../src/content/concepts';
+
+describe('field manual', () => {
+  it('has an entry for every concept with the required sections', () => {
+    for (const c of CONCEPTS) {
+      const body = MANUAL[c.id];
+      expect(body, c.id).toBeDefined();
+      expect(body, c.id).toMatch(/## What it is/);
+      expect(body, c.id).toMatch(/## How it actually works/);
+      expect(body, c.id).toMatch(/## Common exam traps/);
+      expect(body, c.id).toMatch(/## Related/);
+      for (const [, ref] of body.matchAll(/\[\[([a-z0-9-]+)\]\]/g)) expect(MANUAL[ref], `${c.id} → ${ref}`).toBeDefined();
+    }
+  });
+});

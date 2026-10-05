@@ -38,7 +38,6 @@ describe('NACL evaluation', () => {
 });
 
 describe('security groups', () => {
-  const sgA: SecurityGroup = { id: 'sg-a', name: 'alb-sg', vpcId: 'v', inbound: [], outbound: [] };
   const sgB: SecurityGroup = { id: 'sg-b', name: 'app-sg', vpcId: 'v', inbound: [{ protocol: 'tcp', fromPort: 443, toPort: 443, source: { sg: 'sg-a' } }], outbound: [] };
 
   it('match SG-referencing rules by membership, not IP', () => {
