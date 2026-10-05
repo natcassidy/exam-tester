@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AsgConfig } from '../../src/engine/model';
-import { defaultConfig } from '../../src/engine/board';
+import { createBoardFromLayout, defaultConfig, placeComponent } from '../../src/engine/board';
 import { BoardBuilder } from '../../src/engine/builder';
 import { simulateAsg, readyDelayMin } from '../../src/engine/sim/capacity';
 import { computeAzOutage } from '../../src/engine/sim/failure';
@@ -8,6 +8,8 @@ import { ledgerly } from '../../src/content/missions/ledgerly';
 import { northwind } from '../../src/content/missions/northwind';
 import { estimateCost } from '../../src/engine/cost/estimate';
 import { scoreResults } from '../../src/engine/scoring';
+import { runMission } from '../../src/engine/sim/runner';
+import { portfolio } from '../../src/content/missions/portfolio';
 
 describe('ASG warmup timing', () => {
   const cfg: AsgConfig = { ...(defaultConfig('asg') as AsgConfig), min: 2, desired: 2, max: 10, warmupSec: 300, policy: { kind: 'targetTracking', targetCpu: 50 } };
@@ -101,5 +103,20 @@ describe('scoring', () => {
     expect(scoreResults(evs, [{ eventId: 'a', status: 'pass' }, { eventId: 'b', status: 'warn' }] as any).stars).toBe(2);
     expect(scoreResults(evs, [{ eventId: 'a', status: 'pass' }, { eventId: 'b', status: 'fail' }] as any).stars).toBe(1);
     expect(scoreResults(evs, [{ eventId: 'a', status: 'fail' }, { eventId: 'b', status: 'fail' }] as any).stars).toBe(0);
+  });
+
+  it('no stars while an event has nothing to test', () => {
+    const evs = [{ id: 'a', domain: 'secure' }, { id: 'b', domain: 'cost' }] as any;
+    const s = scoreResults(evs, [{ eventId: 'a', status: 'pass' }, { eventId: 'b', status: 'fail', incomplete: true }] as any);
+    expect(s).toMatchObject({ stars: 0, points: 50, incomplete: true });
+  });
+
+  it('a lone default bucket earns no star on the portfolio mission', () => {
+    const board = createBoardFromLayout(portfolio.layout);
+    const placed = placeComponent(board, 's3', { kind: 'region', refId: board.regions[0].id }, portfolio.defaults);
+    if (!placed.ok) throw new Error(placed.error);
+    const s = scoreResults(portfolio.events, runMission(placed.board, portfolio));
+    expect(s.passed * 2).toBeGreaterThanOrEqual(s.total); // the audit, the bill and the scraper pass…
+    expect(s.stars).toBe(0); // …but visitors have nothing to load yet
   });
 });

@@ -7,18 +7,23 @@ export interface Score {
   failed: number;
   total: number;
   points: number; // 0-100
+  /** Some event had nothing to test: a component it needs isn't on the board yet. */
+  incomplete: boolean;
   domains: Partial<Record<Domain, { earned: number; total: number }>>;
 }
 
 /**
  * 3 stars: every event passes. 2: nothing fails (some warnings). 1: at least half pass. 0 otherwise.
+ * An incomplete design (some event has nothing to test yet) earns no stars, so a lone bucket can't
+ * collect a star from the audit and the bill while the site it should serve doesn't exist.
  * Points: pass = 1, warn = 0.5, fail = 0.
  */
 export function scoreResults(events: EventSpec[], results: EventResult[]): Score {
   const domains: Score['domains'] = {};
-  let passed = 0, warned = 0, failed = 0, earned = 0;
+  let passed = 0, warned = 0, failed = 0, earned = 0, incomplete = false;
   for (const ev of events) {
     const r = results.find((x) => x.eventId === ev.id);
+    if (r?.incomplete) incomplete = true;
     const v = r?.status === 'pass' ? 1 : r?.status === 'warn' ? 0.5 : 0;
     if (r?.status === 'pass') passed++;
     else if (r?.status === 'warn') warned++;
@@ -29,8 +34,8 @@ export function scoreResults(events: EventSpec[], results: EventResult[]): Score
     d.total += 1;
   }
   const total = events.length;
-  const stars: Score['stars'] = total && passed === total ? 3 : total && failed === 0 ? 2 : passed * 2 >= total && total ? 1 : 0;
-  return { stars, passed, warned, failed, total, points: total ? Math.round((earned / total) * 100) : 0, domains };
+  const stars: Score['stars'] = !total || incomplete ? 0 : passed === total ? 3 : failed === 0 ? 2 : passed * 2 >= total ? 1 : 0;
+  return { stars, passed, warned, failed, total, points: total ? Math.round((earned / total) * 100) : 0, incomplete, domains };
 }
 
 // ---------- Refactor missions (Stage 4) ----------

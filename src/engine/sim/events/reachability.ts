@@ -28,7 +28,7 @@ export const reachability: EventHandler = (board, ev) => {
   const to = resolveEndpoint(board, p.to);
   const missing = !from ? p.label?.from ?? p.from : !to ? p.label?.to ?? p.to : null;
   if (missing) {
-    return result(ev, { status: 'fail', summary: `Nothing to test: ${missing} isn't on the board yet.`, lesson: 'Place the components this requirement depends on, then run again.', highlight: [] });
+    return result(ev, { status: 'fail', incomplete: true, summary: `Nothing to test: ${missing} isn't on the board yet.`, lesson: 'Place the components this requirement depends on, then run again.', highlight: [] });
   }
   const t = traceFlow(board, { from: from!, to: to!, protocol: p.protocol ?? 'tcp', port: p.port, clientCity: p.clientCity });
   const bad = failingHop(t);

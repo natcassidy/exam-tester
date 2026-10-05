@@ -5,7 +5,7 @@ export const azOutage: EventHandler = (board, ev) => {
   const p = ev.params as AzOutageParams;
   const o = computeAzOutage(board, p);
   if (!o.tiers.some((t) => t.tier === 'Load balancer' || t.tier === 'Compute' || t.tier === 'Database')) {
-    return result(ev, { status: 'fail', summary: 'There is no application on the board to fail over.', lesson: 'Place the workload first.', highlight: [] });
+    return result(ev, { status: 'fail', incomplete: true, summary: 'There is no application on the board to fail over.', lesson: 'Place the workload first.', highlight: [] });
   }
   const rtoOk = o.rtoSec <= p.rtoSec;
   const rpoOk = o.rpoSec <= p.rpoSec;

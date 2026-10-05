@@ -22,7 +22,7 @@ const pct = (x: number) => `${(x * 100).toFixed(x < 0.01 ? 2 : 1)}%`;
 export const traffic: EventHandler = (board, ev) => {
   const p = ev.params as TrafficParams;
   const entry = resolveRef(board, p.entry);
-  if (!entry) return result(ev, { status: 'fail', summary: `No ${p.entry.toUpperCase()} on the board to receive traffic.`, lesson: 'Place the entry point first.', highlight: [] });
+  if (!entry) return result(ev, { status: 'fail', incomplete: true, summary: `No ${p.entry.toUpperCase()} on the board to receive traffic.`, lesson: 'Place the entry point first.', highlight: [] });
 
   if (entry.config.type === 'alb') {
     const reach = traceFlow(board, { from: 'internet', to: entry.id, protocol: 'tcp', port: entry.config.listener.port });

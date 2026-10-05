@@ -35,7 +35,7 @@ export const iamAccess: EventHandler = (board, ev) => {
   const resource = resolveIamRef(board, p.resource);
   if (!principal || !resource) {
     const missing = !principal ? p.label?.principal ?? p.principal : p.label?.resource ?? p.resource;
-    return result(ev, { status: 'fail', summary: `Nothing to test: ${missing} isn't on the board.`, lesson: 'Place the components this requirement depends on, then run again.', highlight: [] });
+    return result(ev, { status: 'fail', incomplete: true, summary: `Nothing to test: ${missing} isn't on the board.`, lesson: 'Place the components this requirement depends on, then run again.', highlight: [] });
   }
   const t = traceCall(board, { principal, action: p.action, resource, objectKey: p.objectKey, context: p.context });
   const bad = failingHop(t);

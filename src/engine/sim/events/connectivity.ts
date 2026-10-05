@@ -22,7 +22,7 @@ export interface ConnectivityParams {
 export const connectivity: EventHandler = (board, ev) => {
   const p = ev.params as ConnectivityParams;
   const to = resolveEndpoint(board, p.to);
-  if (!to) return result(ev, { status: 'fail', summary: `Nothing to connect to: ${p.label ?? p.to} isn't on the board yet.`, lesson: 'Place the workload first.', highlight: [] });
+  if (!to) return result(ev, { status: 'fail', incomplete: true, summary: `Nothing to connect to: ${p.label ?? p.to} isn't on the board yet.`, lesson: 'Place the workload first.', highlight: [] });
   const all = links(board);
   const run = (failedLinks: string[] = []): Trace => traceFlow(board, { from: 'onprem', to, protocol: 'tcp', port: p.port }, { failedLinks });
   const lines = all.map((l) => ({ label: l.name, value: `${l.type === 'dx' ? `Direct Connect ${l.config.type === 'dx' ? l.config.speedGbps : ''} Gbps` : 'Site-to-Site VPN'} · ready in ${fmtDays(readyDays(l))} · ~${linkMbps(board, l).toLocaleString()} Mbps${l.type === 'vpn' ? ' (over the internet)' : ' (dedicated)'} · ${encrypted(l) ? 'encrypted' : 'not encrypted'}` }));

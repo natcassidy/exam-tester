@@ -713,6 +713,8 @@ export interface EventResult {
   highlight: ComponentId[];
   /** Object to open with "Fix it" (component, subnet, SG, NACL or route table id). */
   fixTarget?: string;
+  /** Failed because a component the event needs isn't on the board yet (nothing to test). */
+  incomplete?: boolean;
   trace?: Trace;
   timeline?: TimelineSeries;
   metrics?: Record<string, number>;

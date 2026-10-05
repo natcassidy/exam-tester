@@ -6,7 +6,7 @@ export const audit: EventHandler = (board, ev) => {
   const applicable = findings.filter((f) => f.finding.status !== 'na');
   const failed = findings.filter((f) => f.finding.status === 'fail');
   const lines = findings.map((f) => ({ label: f.rule.title, value: f.finding.message, status: f.finding.status === 'na' ? ('warn' as const) : f.finding.status }));
-  if (!applicable.length) return result(ev, { status: 'fail', summary: 'Nothing to audit yet: none of the resources these checks cover are on the board.', detail: { lines }, lesson: 'Build the architecture, then audit it.', highlight: [] });
+  if (!applicable.length) return result(ev, { status: 'fail', incomplete: true, summary: 'Nothing to audit yet: none of the resources these checks cover are on the board.', detail: { lines }, lesson: 'Build the architecture, then audit it.', highlight: [] });
   if (failed.length) {
     return result(ev, {
       status: 'fail',
