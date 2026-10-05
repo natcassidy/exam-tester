@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { DailyItem } from '../../engine/mastery/daily';
 import { streak } from '../../engine/mastery/daily';
 import { miniIncidentOptions } from '../../engine/incident/mini';
+import { displayOptions, letter } from '../../engine/mastery/exam';
 import { CONCEPT_BY_ID } from '../../content/concepts';
 import { MISSION_BY_ID } from '../../content/missions';
 import { QUESTION_BY_ID } from '../../content/questions';
@@ -19,7 +20,7 @@ function DiffItem({ missionId, onAnswer, onNext }: { missionId: string; onAnswer
       <p className="hint">
         {d.leftLabel} vs. {d.rightLabel}. {d.question}
       </p>
-      {d.options.map((o) => {
+      {displayOptions({ id: m.id, options: d.options }).map((o, i) => {
         const cls = chosen ? (o.id === d.correct ? 'right' : o.id === chosen ? 'wrong' : '') : '';
         return (
           <button
@@ -31,7 +32,7 @@ function DiffItem({ missionId, onAnswer, onNext }: { missionId: string; onAnswer
               onAnswer(o.id === d.correct);
             }}
           >
-            <span className="mono">{o.id.toUpperCase()}.</span>
+            <span className="mono">{letter(i)}.</span>
             <span>{o.text}</span>
             {chosen && <span className="why">{o.why}</span>}
           </button>

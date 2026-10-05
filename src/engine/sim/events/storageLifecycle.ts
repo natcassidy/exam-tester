@@ -87,7 +87,7 @@ const fmtAge = (d: number) => (d >= 365 ? `${(d / 365).toFixed(d % 365 ? 1 : 0)}
 export const storageLifecycle: EventHandler = (board, ev) => {
   const p = ev.params as StorageLifecycleParams;
   const b = resolveRef(board, p.target ?? 's3');
-  if (!b || b.config.type !== 's3') return result(ev, { status: 'fail', summary: 'There is no bucket on the board yet.', lesson: 'Place the bucket first.', highlight: [] });
+  if (!b || b.config.type !== 's3') return result(ev, { status: 'fail', incomplete: true, summary: 'There is no bucket on the board yet.', lesson: 'Place the bucket first.', highlight: [] });
   const cfg = b.config;
   const schedule = [{ afterDays: 0, toClass: cfg.storageClass ?? 'STANDARD' }, ...[...(cfg.lifecycle ?? [])].sort((a, c) => a.afterDays - c.afterDays)];
   const scheduleLine = { label: 'Lifecycle', value: `${schedule.map((t) => `${fmtAge(t.afterDays)}: ${S3_CLASSES[t.toClass].label}`).join(' → ')}${cfg.expireAfterDays != null ? ` → expire at ${fmtAge(cfg.expireAfterDays)}` : ' → kept forever'}` };

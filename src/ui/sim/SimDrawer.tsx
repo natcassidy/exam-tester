@@ -230,6 +230,7 @@ export function SimDrawer() {
             <Stars n={score.stars} />
             <span className="hint">
               {score.passed}/{score.total} passed · {score.points} pts
+              {score.incomplete && <span title="Some events have nothing to test yet. Place the components they need to earn stars."> · design incomplete, no stars yet</span>}
             </span>
           </span>
         )}

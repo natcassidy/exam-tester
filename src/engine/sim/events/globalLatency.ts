@@ -27,7 +27,7 @@ export const DAX_MS = 1;
 export const globalLatency: EventHandler = (board, ev) => {
   const p = ev.params as GlobalLatencyParams;
   const table = resolveRef(board, p.table ?? 'dynamodb') as (Component & { config: ConfigOf<'dynamodb'> }) | undefined;
-  if (!table) return result(ev, { status: 'fail', summary: 'There is no table on the board yet.', lesson: 'Place the data store first.', highlight: [] });
+  if (!table) return result(ev, { status: 'fail', incomplete: true, summary: 'There is no table on the board yet.', lesson: 'Place the data store first.', highlight: [] });
   const tableRegions = [regionOf(board, table), ...(table.config.replicaRegions ?? [])];
   const dax = !!table.config.dax;
 

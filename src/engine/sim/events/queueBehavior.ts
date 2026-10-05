@@ -27,7 +27,7 @@ export const queueBehavior: EventHandler = (board, ev) => {
   const p = ev.params as QueueParams;
   const q = resolveRef(board, p.queue);
   const fn = resolveRef(board, p.consumer);
-  if (!q) return result(ev, { status: 'fail', summary: 'No queue on the board.', lesson: 'Place an SQS queue between the producer and the worker.', highlight: [] });
+  if (!q) return result(ev, { status: 'fail', incomplete: true, summary: 'No queue on the board.', lesson: 'Place an SQS queue between the producer and the worker.', highlight: [] });
   if (!fn) return result(ev, { status: 'fail', summary: `Nothing consumes ${q.name}: no Lambda function has it as an event source.`, lesson: 'Set the queue as the worker function\'s event source.', highlight: [q.id], fixTarget: q.id });
   const qc = q.config as ConfigOf<'sqs'>;
   const fc = fn.config as ConfigOf<'lambda'>;

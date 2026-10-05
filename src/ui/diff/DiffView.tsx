@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { Board as BoardT, EventResult, SgRule, SgSource } from '../../engine/model';
 import { runMission } from '../../engine/sim/runner';
+import { displayOptions, letter } from '../../engine/mastery/exam';
 import { subnetsOf } from '../../engine/board';
 import { findSubnet } from '../../engine/net/routing';
 import { iamOf, bucketPolicyDoc } from '../../engine/iam/access';
@@ -184,12 +185,12 @@ export function DiffPanel({ state }: { state: ReturnType<typeof useDiffState> })
         )}
         <div className="section" style={{ marginTop: 14 }}>
           <h4>{d.question}</h4>
-          {d.options.map((o) => {
+          {displayOptions({ id: mission.id, options: d.options }).map((o, i) => {
             const isChosen = (chosen ?? picked) === o.id;
             const cls = chosen ? (o.id === d.correct ? 'right' : isChosen ? 'wrong' : '') : isChosen ? 'chosen' : '';
             return (
               <button key={o.id} className={`q-opt ${cls}`} disabled={!!chosen} aria-pressed={isChosen} onClick={() => setPicked(o.id)}>
-                <span className="mono">{o.id.toUpperCase()}.</span>
+                <span className="mono">{letter(i)}.</span>
                 <span>{o.text}</span>
                 {chosen && <span className="why">{o.id === d.correct ? '✓ ' : '✗ '}{o.why}</span>}
               </button>

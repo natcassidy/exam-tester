@@ -35,7 +35,7 @@ const pct = (x: number) => `${(x * 100).toFixed(x < 0.01 ? 2 : 1)}%`;
 export const fleetHealth: EventHandler = (board, ev) => {
   const p = ev.params as FleetHealthParams;
   const alb = resolveRef(board, p.entry);
-  if (!alb || alb.config.type !== 'alb') return result(ev, { status: 'fail', summary: 'No load balancer on the board.', lesson: 'Place the entry point first.', highlight: [] });
+  if (!alb || alb.config.type !== 'alb') return result(ev, { status: 'fail', incomplete: true, summary: 'No load balancer on the board.', lesson: 'Place the entry point first.', highlight: [] });
   const target = alb.config.targetId ? board.components[alb.config.targetId] : undefined;
   if (!target || target.config.type !== 'asg') return result(ev, { status: 'fail', summary: `${alb.name}'s target is not an Auto Scaling group.`, lesson: 'Register an Auto Scaling group as the target.', highlight: [alb.id], fixTarget: alb.id });
   const reach = traceFlow(board, { from: 'internet', to: alb.id, protocol: 'tcp', port: alb.config.listener.port });

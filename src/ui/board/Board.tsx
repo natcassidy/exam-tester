@@ -79,7 +79,25 @@ function Node({ c, span }: { c: Component; span?: string }) {
   );
 }
 
-function SubnetCell({ s, col, children }: { s: Subnet; col: number; children: ReactNode }) {
+/** Invisible copies of the multi-AZ nodes drawn over a subnet, so the subnet grows to make room for them. */
+function SpanSpacer({ comps }: { comps: Component[] }) {
+  const { board } = useBoardView();
+  return (
+    <div className="span-spacer" aria-hidden>
+      {comps.map((c) => (
+        <div key={c.id} className="node">
+          <Abbr type={c.type} />
+          <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+            <span className="nm">{c.name}</span>
+            <span className="sub">{nodeSubtitle(board, c)}</span>
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SubnetCell({ s, col, reserve, children }: { s: Subnet; col: number; reserve?: Component[]; children: ReactNode }) {
   const { board, selection, select, readOnly } = useBoardView();
   const placing0 = useGame((st) => st.placing);
   const placing = readOnly ? null : placing0;
@@ -104,6 +122,7 @@ function SubnetCell({ s, col, children }: { s: Subnet; col: number; children: Re
           </button>
           <div className="hint" style={{ fontSize: 11, marginTop: 2 }}>{status.reason}</div>
           <div className="subnet-body">{children}</div>
+          {reserve && reserve.length > 0 && <SpanSpacer comps={reserve} />}
         </div>
       </Zone>
     </div>
@@ -165,7 +184,7 @@ function VpcView({ board, vpc }: { board: BoardT; vpc: Vpc }) {
           <div key={tier} className="tier" style={{ gridTemplateColumns: cols }}>
             {cells.map((s, i) =>
               s ? (
-                <SubnetCell key={s.id} s={s} col={i + 1}>
+                <SubnetCell key={s.id} s={s} col={i + 1} reserve={spanning.filter((sp) => sp.from <= i && i <= sp.to).map((sp) => sp.c)}>
                   {(single[s.id] ?? []).map((c) => (
                     <Node key={c.id} c={c} />
                   ))}

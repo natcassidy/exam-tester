@@ -129,7 +129,7 @@ const SCENARIO_LABEL: Record<DataLossScenario, string> = {
 export const dataLoss: EventHandler = (board, ev) => {
   const p = ev.params as DataLossParams;
   const target = resolveRef(board, p.target ?? 's3');
-  if (!target) return result(ev, { status: 'fail', summary: `Nothing to protect: ${p.label ?? p.target ?? 'the bucket'} isn't on the board yet.`, lesson: 'Place the data store first.', highlight: [] });
+  if (!target) return result(ev, { status: 'fail', incomplete: true, summary: `Nothing to protect: ${p.label ?? p.target ?? 'the bucket'} isn't on the board yet.`, lesson: 'Place the data store first.', highlight: [] });
   const ways = target.config.type === 's3' ? s3Ways(board, target as Component & { config: ConfigOf<'s3'> }, p) : dbWays(board, target, p);
   const good = ways.filter((w) => w.ok).sort((a, b) => a.rpoSec - b.rpoSec);
   const best = good[0];

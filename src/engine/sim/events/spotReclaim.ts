@@ -21,7 +21,7 @@ export interface SpotReclaimParams {
 export const spotReclaim: EventHandler = (board, ev) => {
   const p = ev.params as SpotReclaimParams;
   const asg = resolveRef(board, p.target ?? 'asg');
-  if (!asg || asg.config.type !== 'asg') return result(ev, { status: 'fail', summary: 'There is no Auto Scaling group on the board to run the batch.', lesson: 'Place the worker fleet first.', highlight: [] });
+  if (!asg || asg.config.type !== 'asg') return result(ev, { status: 'fail', incomplete: true, summary: 'There is no Auto Scaling group on the board to run the batch.', lesson: 'Place the worker fleet first.', highlight: [] });
   const cfg = asg.config as ConfigOf<'asg'>;
   const purchase = cfg.purchase;
   const mix = asgMix(cfg);
