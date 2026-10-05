@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { MISSIONS } from '../../content/missions';
 import { useGame } from '../../store/game';
 import { usePrefersReducedMotion } from './useMedia';
@@ -15,6 +15,26 @@ export function Settings({ onClose }: { onClose: () => void }) {
   const setTutorial = useGame((s) => s.setTutorial);
   const setMission = useGame((s) => s.setMission);
   const prefers = usePrefersReducedMotion();
+  const exportProgress = useGame((s) => s.exportProgress);
+  const importProgress = useGame((s) => s.importProgress);
+  const toast = useGame((s) => s.toast);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const doExport = () => {
+    try {
+      const blob = new Blob([exportProgress()], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `blast-radius-progress-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast('Progress exported.', 'success');
+    } catch (e) {
+      toast(`Export failed: ${(e as Error).message}`, 'error');
+    }
+  };
   // Escape closes this window only, before the app-wide handler sees it.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -54,6 +74,31 @@ export function Settings({ onClose }: { onClose: () => void }) {
             >
               Replay the tour
             </button>
+          </div>
+          <div className="section">
+            <h4>Progress</h4>
+            <p className="hint" style={{ marginTop: 0 }}>
+              Progress is saved in this browser. Export it to back it up or move it to another device.
+            </p>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <button className="btn" onClick={doExport}>
+                ⇩ Export progress
+              </button>
+              <button className="btn" onClick={() => fileRef.current?.click()}>
+                ⇧ Import progress
+              </button>
+            </div>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="application/json,.json"
+              hidden
+              onChange={async (e) => {
+                const f = e.target.files?.[0];
+                e.target.value = '';
+                if (f) importProgress(await f.text());
+              }}
+            />
           </div>
           <div className="section">
             <h4>Keyboard</h4>

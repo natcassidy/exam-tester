@@ -63,7 +63,7 @@ function PolicyEditor({ policy, onChange }: { policy: ScalingPolicy; onChange: (
 function BucketPolicyView({ c }: { c: Component }) {
   const board = useGame((s) => s.board());
   const doc = bucketPolicyDoc(board, c);
-  return <pre className="md" style={{ background: 'var(--bg-2)', padding: 8, borderRadius: 6, fontSize: 11, overflow: 'auto' }}>{doc ? JSON.stringify(doc, null, 2) : '// No bucket policy. Only principals with IAM permissions in this account can read.'}</pre>;
+  return <pre className="md" style={{ background: 'var(--bg-2)', padding: 8, borderRadius: 6, fontSize: 11, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{doc ? JSON.stringify(doc, null, 2) : '// No bucket policy. Only principals with IAM permissions in this account can read.'}</pre>;
 }
 
 export function ConfigPanel({ c }: { c: Component }) {

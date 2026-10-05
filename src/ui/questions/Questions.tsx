@@ -21,10 +21,10 @@ export function Questions() {
     setScore(0);
   };
   return (
-    <div className="modal-back" onClick={close} role="dialog" aria-modal aria-label={practice ? practice.title : 'Transfer questions'}>
+    <div className="modal-back" onClick={close} role="dialog" aria-modal aria-label={practice ? practice.title : 'Practice questions'}>
       <div className="modal narrow" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <h2>{practice ? practice.title : 'Transfer questions'}</h2>
+          <h2>{practice ? practice.title : 'Practice questions'}</h2>
           <span className="hint">{done ? 'Done' : `${idx + 1} / ${ids.length}`}</span>
           <button className="btn ghost small" onClick={close} aria-label="Close">
             ✕

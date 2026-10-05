@@ -5,7 +5,9 @@ import { modeOf, useGame } from '../store/game';
 import { DiffMain } from './diff/DiffView';
 import { DiagnoseModal, IncidentBar, LogsModal } from './incident/IncidentBar';
 import { Board, parseZoneId } from './board/Board';
-import { Palette, PaletteOverlayItem } from './board/Palette';
+import { Palette, PaletteOverlayItem, paletteFor } from './board/Palette';
+import { BoardTools, BoardToolbar } from './board/BoardToolbar';
+import { RequirementsStrip } from './shell/RequirementsStrip';
 import { Console } from './console/Console';
 import { FieldManual } from './manual/FieldManual';
 import { Questions } from './questions/Questions';
@@ -25,9 +27,13 @@ import { TracePanel } from './trace/TracePanel';
 function RightPanel() {
   const selection = useGame((s) => s.selection);
   const traceOpen = useGame((s) => s.traceOpen);
-  if (traceOpen) return <TracePanel />;
-  if (selection) return <Console />;
-  return <Brief />;
+  if (!traceOpen && !selection) return <Brief />;
+  return (
+    <>
+      <RequirementsStrip />
+      {traceOpen ? <TracePanel /> : <Console />}
+    </>
+  );
 }
 
 export function App() {
@@ -74,6 +80,14 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // Escape closes the mobile brief sheet too (the sheet's open state lives here, not in the store).
+  useEffect(() => {
+    if (!briefOpen) return;
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setBriefOpen(false);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [briefOpen]);
+
   const onDragStart = (e: DragStartEvent) => setDragType((e.active.data.current?.type as ServiceType) ?? null);
   const onDragEnd = (e: DragEndEvent) => {
     setDragType(null);
@@ -82,6 +96,7 @@ export function App() {
     place(type, parseZoneId(String(e.over.id)));
   };
 
+  const hasPalette = paletteFor(mission.palette).length > 0;
   const sheetOpen = mode !== 'diff' && isMobile && (!!selection || traceOpen || briefOpen);
 
   return (
@@ -93,22 +108,22 @@ export function App() {
             <DiffMain key={mission.id} isMobile={isMobile} />
           </div>
         ) : (
-        <div className="main">
-          {!isMobile && (
+        <div className={`main ${hasPalette ? '' : 'no-palette'}`}>
+          {!isMobile && hasPalette && (
             <aside className="col left">
               <Palette />
             </aside>
           )}
-          <main className="col center">
-            {isMobile && (
-              <div style={{ padding: '8px 10px 0', display: 'flex', gap: 6 }}>
-                <button className="btn small" onClick={() => { setBriefOpen(true); select(null); openTrace(false); }}>
-                  Brief & requirements
-                </button>
-              </div>
-            )}
-            {mode === 'incident' && <IncidentBar />}
-            <Board />
+          <main className="col center workspace">
+            <div className="board-head">
+              {mode === 'incident' && <IncidentBar tools={<BoardTools />} />}
+              {(mode !== 'incident' || isMobile) && (
+                <BoardToolbar tools={mode !== 'incident'} onBrief={isMobile ? () => { setBriefOpen(true); select(null); openTrace(false); } : undefined} />
+              )}
+            </div>
+            <div className="board-scroll">
+              <Board />
+            </div>
           </main>
           {!isMobile && (
             <aside className="col right">
@@ -125,7 +140,7 @@ export function App() {
           <div className="modal-back" style={{ background: 'rgba(0,0,0,0.35)', zIndex: 39 }} onClick={() => { setBriefOpen(false); select(null); openTrace(false); setPlacing(null); }} />
           <aside className="col right sheet" aria-label="Console">
             <div className="sheet-grip" />
-            {traceOpen ? <TracePanel /> : selection ? <Console /> : <Brief />}
+            <RightPanel />
           </aside>
         </>
       )}

@@ -22,12 +22,12 @@ const STEPS: Step[] = [
   },
   {
     title: 'Trace a request',
-    body: 'Press Trace in the top bar and send a request through your design. You will see every hop and the rule that allowed or blocked it.',
+    body: 'Press Trace in the bar above the board and send a request through your design. You will see every hop and the rule that allowed or blocked it.',
     done: (s) => !!s.activeTrace,
   },
   {
     title: 'Run the simulation',
-    body: "Press Run simulation at the bottom. The events test each requirement against your design and explain what failed and why. Add CloudFront and Route 53 to finish the brief.",
+    body: "Press Run simulation at the bottom right. The events test each requirement against your design and explain what failed and why. Add CloudFront and Route 53 to finish the brief.",
     done: (s) => !!s.results[s.currentMissionId],
   },
 ];
@@ -64,7 +64,7 @@ export function Tutorial() {
       {finished ? (
         <>
           <h3>You have the loop</h3>
-          <p>Place, configure, trace, simulate. The concept map, the daily session and the practice exam are in the top bar. You can replay this tour from Settings.</p>
+          <p>Place, configure, trace, simulate. Today’s review session, the concept map and the practice exam are at the top right. You can replay this tour from Settings.</p>
           <button className="btn primary small" onClick={() => setTutorial(STEPS.length, true)}>
             Got it
           </button>

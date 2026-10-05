@@ -13,7 +13,7 @@ npm test         # engine + mission validation tests (Vitest)
 npm run build    # one self-contained dist/index.html that plays from file://
 ```
 
-No backend and no network calls at runtime. Progress lives in IndexedDB (falling back to localStorage) and can be exported/imported as JSON from the top bar.
+No backend and no network calls at runtime. Progress lives in IndexedDB (falling back to localStorage) and can be exported/imported as JSON from Settings.
 
 ## Layout
 

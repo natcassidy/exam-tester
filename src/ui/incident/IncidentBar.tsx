@@ -1,10 +1,10 @@
-import { useMemo, useState } from 'react';
+import { ReactNode, useMemo, useState } from 'react';
 import type { LogSource } from '../../engine/model';
 import { listSuspects } from '../../engine/incident/suspects';
 import { useGame } from '../../store/game';
 
 /** Alert banner, investigation budget and the incident's two tools: logs and diagnosis. */
-export function IncidentBar() {
+export function IncidentBar({ tools }: { tools?: ReactNode }) {
   const mission = useGame((s) => s.mission());
   const progress = useGame((s) => s.incident());
   const board = useGame((s) => s.board());
@@ -42,6 +42,7 @@ export function IncidentBar() {
         <button className="btn small" onClick={() => openLogs(true)}>
           ☷ Logs ({inc.logs.length})
         </button>
+        {tools}
         <button className={`btn small ${progress.diagnosis ? '' : 'primary'}`} onClick={() => openDiagnose(true)}>
           {progress.diagnosis ? `Diagnosis: ${suspect ? `${suspect.group} · ${suspect.label}` : progress.diagnosis}` : '⌖ Diagnose'}
         </button>

@@ -13,6 +13,7 @@ import type { Mission } from '../../engine/model';
 import type { RefactorScore } from '../../engine/scoring';
 import { DEFENDS } from '../../content/defend';
 import { MISSION_BY_ID } from '../../content/missions';
+import { nextMission } from '../shell/MissionPicker';
 
 const usd = (n: number) => `$${Math.round(n).toLocaleString()}`;
 
@@ -116,6 +117,8 @@ function ResultCard({ ev, r, missionId, surprise }: { ev: EventSpec; r: EventRes
   const canDefend = !!DEFENDS[`${missionId}/${ev.id}`] && !refactorPending;
   const fix = fixSelection(r.fixTarget, board);
   const chip = metricChip(r);
+  const mission = MISSION_BY_ID[missionId];
+  const reqs = (ev.requirementIds ?? []).map((id) => mission?.requirements.find((q) => q.id === id)?.text).filter(Boolean) as string[];
   return (
     <article className={`result ${r.status}${surprise ? ' surprise' : ''}`}>
       <div className="result-head">
@@ -125,6 +128,11 @@ function ResultCard({ ev, r, missionId, surprise }: { ev: EventSpec; r: EventRes
         {chip && <span className="tag muted mono">{chip}</span>}
       </div>
       <div className="hint">{ev.desc}</div>
+      {reqs.length > 0 && (
+        <div className="checks">
+          <span className="hint">Checks</span> {reqs.join(' · ')}
+        </div>
+      )}
       <div className="summary">{r.summary}</div>
       {r.timeline && <Timeline series={r.timeline} />}
       {open && r.detail && (
@@ -180,8 +188,8 @@ function ResultCard({ ev, r, missionId, surprise }: { ev: EventSpec; r: EventRes
           </button>
         )}
         {canDefend && r.status === 'pass' && (
-          <button className="btn small" onClick={() => openDefend({ missionId, eventId: ev.id })} title="Explain in your own words why your design passes">
-            {defended ? '✓ Defend again' : 'Defend it'}
+          <button className="btn small" onClick={() => openDefend({ missionId, eventId: ev.id })} title="Defend your design: explain in your own words why it passes, then grade yourself against a rubric">
+            {defended ? '✓ Explain again' : 'Explain why it passes'}
           </button>
         )}
         {r.manual.slice(0, 3).map((id) => (
@@ -205,12 +213,21 @@ export function SimDrawer() {
   const diagnosis = useGame((s) => s.incident().diagnosis);
   const refactor = useGame((s) => s.refactorScores[mission.id]);
   const surprise = useGame((s) => s.surprise[mission.id]);
+  const setMission = useGame((s) => s.setMission);
   const score = results && !refactor ? scoreResults(mission.events, results) : null;
   const isIncident = !!mission.incident;
+  const stars = report?.stars ?? refactor?.stars ?? score?.stars ?? 0;
+  const next = stars === 3 ? nextMission(mission.id) : null;
+  const pending = score?.incomplete ? results!.filter((r) => r.incomplete).length : 0;
   return (
     <section className={`drawer ${open ? '' : 'closed'}`} aria-label="Simulation">
       <div className="drawer-head">
-        <h3>{isIncident ? 'Verification' : 'Simulation'}</h3>
+        <button className="drawer-title" onClick={() => setOpen(!open)} aria-expanded={open}>
+          <h3>{isIncident ? 'Verification' : 'Simulation'}</h3>
+          <span className="caret" aria-hidden>
+            {open ? '▾' : '▴'}
+          </span>
+        </button>
         {report && (
           <span className="score">
             <Stars n={report.stars} />
@@ -228,24 +245,32 @@ export function SimDrawer() {
         {!isIncident && score && (
           <span className="score">
             <Stars n={score.stars} />
-            <span className="hint">
-              {score.passed}/{score.total} passed · {score.points} pts
-              {score.incomplete && <span title="Some events have nothing to test yet. Place the components they need to earn stars."> · design incomplete, no stars yet</span>}
-            </span>
+            {score.incomplete ? (
+              <span className="hint">
+                <b className="incomplete">Design incomplete</b> · {pending} {pending === 1 ? 'check has' : 'checks have'} nothing to test yet. Place what {pending === 1 ? 'it needs' : 'they need'} to earn stars.
+              </span>
+            ) : (
+              <span className="hint">
+                {score.passed}/{score.total} passed · {score.points} pts
+              </span>
+            )}
           </span>
         )}
+        {!results && <span className="hint drawer-sub">{isIncident ? 'Diagnose, fix, then verify.' : `${mission.events.length} events will test your design.`}</span>}
         <span style={{ flex: 1 }} />
-        <button className="btn primary" onClick={runSim} title={isIncident && !diagnosis ? 'Diagnose the root cause first' : undefined}>
-          {isIncident ? '✓ Verify fix' : '▶ Run simulation'}
-        </button>
         {results && (
-          <button className="btn" onClick={() => openQuestions(true)}>
-            Transfer questions
+          <button className="btn" onClick={() => openQuestions(true)} title="Exam-style questions on the concepts this mission tested">
+            Practice questions
           </button>
         )}
-        <button className="btn ghost small" onClick={() => setOpen(!open)} aria-expanded={open}>
-          {open ? '▾' : '▴'}
+        <button className={`btn ${next ? '' : 'primary'}`} onClick={runSim} title={isIncident && !diagnosis ? 'Diagnose the root cause first' : undefined}>
+          {isIncident ? '✓ Verify fix' : results ? '▶ Run again' : '▶ Run simulation'}
         </button>
+        {next && (
+          <button className="btn primary" onClick={() => setMission(next.id)} title={next.title}>
+            Next mission →
+          </button>
+        )}
       </div>
       {open && (
         <div className="drawer-body">
@@ -278,7 +303,7 @@ export function SimDrawer() {
                   </div>
                 ))}
               </div>
-              {score.stars === 3 && <p className="summary">Every event passed. Now prove it transfers: try the questions.</p>}
+              {score.stars === 3 && <p className="summary">Every event passed. Check it transfers with the practice questions, or move on to the next mission.</p>}
             </div>
           )}
         </div>

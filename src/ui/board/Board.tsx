@@ -1,4 +1,5 @@
 import { useDndContext, useDroppable } from '@dnd-kit/core';
+import { useMemo } from 'react';
 import type { ReactNode } from 'react';
 import type { Board as BoardT, Component, Placement, Region, ServiceType, Subnet, Vpc } from '../../engine/model';
 import { accountOf, subnetsOf, validatePlacement } from '../../engine/board';
@@ -9,6 +10,32 @@ import { Abbr } from '../shell/Abbr';
 import { nodeSubtitle } from './describe';
 import { TraceOverlay } from '../trace/TraceOverlay';
 import { useBoardView } from './context';
+import { paletteFor } from './Palette';
+
+/**
+ * The services this mission's palette can place in a zone, by name. Empty on read-only boards and when
+ * nothing fits, so a zone only advertises what the player can actually drop there.
+ */
+function usePlaceable(zone: Placement): string[] {
+  const { board, readOnly } = useBoardView();
+  const palette = useGame((s) => s.mission().palette);
+  return useMemo(
+    () => (readOnly ? [] : paletteFor(palette).filter((t) => validatePlacement(board, t, zone) === null).map((t) => SERVICES[t].name)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [readOnly, palette, board, zone.kind, zone.refId],
+  );
+}
+
+/** A zone's contents, or a drop prompt when it is empty and something can go there. */
+function Strip({ comps, placeable, what }: { comps: Component[]; placeable: string[]; what: string }) {
+  if (comps.length) return <div className="strip">{comps.map((c) => <Node key={c.id} c={c} />)}</div>;
+  if (!placeable.length) return null;
+  return (
+    <div className="strip">
+      <span className="empty-note">Drop {what} here: {placeable.join(' · ')}</span>
+    </div>
+  );
+}
 
 export function zoneId(z: Placement): string {
   return `${z.kind}:${z.refId}`;
@@ -216,6 +243,7 @@ function VpcView({ board, vpc }: { board: BoardT; vpc: Vpc }) {
 function RegionView({ board, region, first }: { board: BoardT; region: Region; first: boolean }) {
   const { readOnly } = useBoardView();
   const regional = region.regionalServices.map((id) => board.components[id]).filter(Boolean);
+  const placeable = usePlaceable({ kind: 'region', refId: region.id });
   return (
     <div className="zone region-zone" style={{ borderStyle: 'solid' }}>
       <div className="zone-head">
@@ -224,12 +252,12 @@ function RegionView({ board, region, first }: { board: BoardT; region: Region; f
           {region.id} · {region.name}
         </span>
       </div>
-      <Zone zone={{ kind: 'region', refId: region.id }} className="zone" label={`Regional services in ${region.id}`}>
+      <Zone zone={{ kind: 'region', refId: region.id }} className={`zone ${regional.length || placeable.length ? '' : 'empty'}`} label={`Regional services in ${region.id}`}>
         <div className="zone-head" data-node-id={readOnly || !first ? undefined : 'svc'}>
           <h4>Regional services</h4>
-          <span className="hint">S3 · SQS · Lambda · API Gateway · DynamoDB · Kinesis · Transit Gateway · Backup</span>
+          {!regional.length && !placeable.length && <span className="hint">none</span>}
         </div>
-        <div className="strip">{regional.length ? regional.map((c) => <Node key={c.id} c={c} />) : <span className="empty-note">Drop regional services here</span>}</div>
+        <Strip comps={regional} placeable={placeable} what="regional services" />
       </Zone>
       {region.vpcs.map((v) => (
         <div key={v.id} style={{ marginTop: 10 }}>
@@ -244,6 +272,7 @@ function OnPremView({ board }: { board: BoardT }) {
   const { readOnly } = useBoardView();
   const op = board.onprem!;
   const comps = op.components.map((id) => board.components[id]).filter(Boolean);
+  const placeable = usePlaceable({ kind: 'onprem', refId: 'onprem' });
   return (
     <Zone zone={{ kind: 'onprem', refId: 'onprem' }} className="zone onprem-zone" label="On-premises data centre">
       <div className="zone-head" data-node-id={readOnly ? undefined : 'onprem'}>
@@ -252,8 +281,7 @@ function OnPremView({ board }: { board: BoardT }) {
           {op.cidr} · {op.internetMbps.toLocaleString()} Mbps internet
         </span>
       </div>
-      <div className="hint" style={{ fontSize: 11 }}>Customer gateway · Site-to-Site VPN · Direct Connect · Snowball · DataSync</div>
-      <div className="strip">{comps.length ? comps.map((c) => <Node key={c.id} c={c} />) : <span className="empty-note">Drop hybrid services here</span>}</div>
+      <Strip comps={comps} placeable={placeable} what="hybrid services" />
     </Zone>
   );
 }
@@ -264,6 +292,7 @@ export function Board() {
   const placing = readOnly ? null : placing0;
   const setPlacing = useGame((s) => s.setPlacing);
   const edge = board.edge.map((id) => board.components[id]).filter(Boolean);
+  const placeable = usePlaceable({ kind: 'edge', refId: 'global' });
   return (
     <div className={`board ${placing ? 'placing-mode' : ''} ${readOnly ? 'read-only' : ''}`} onClick={() => !placing && select(null)}>
       {placing && (
@@ -279,12 +308,12 @@ export function Board() {
       <div className="internet-anchor" data-node-id={readOnly ? undefined : 'internet'}>
         <span className="dot" /> Internet (users, attackers, patch servers)
       </div>
-      <Zone zone={{ kind: 'edge', refId: 'global' }} className="zone" label="Global edge">
+      <Zone zone={{ kind: 'edge', refId: 'global' }} className={`zone ${edge.length || placeable.length ? '' : 'empty'}`} label="Global edge">
         <div className="zone-head">
           <h4>Global edge</h4>
-          <span className="hint">CloudFront · Route 53 · WAF</span>
+          {!edge.length && !placeable.length && <span className="hint">none</span>}
         </div>
-        <div className="strip">{edge.length ? edge.map((c) => <Node key={c.id} c={c} />) : <span className="empty-note">Drop global services here</span>}</div>
+        <Strip comps={edge} placeable={placeable} what="global services" />
       </Zone>
       {board.regions.map((r, i) => (
         <RegionView key={r.id} board={board} region={r} first={i === 0} />

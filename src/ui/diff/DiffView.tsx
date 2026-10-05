@@ -10,6 +10,7 @@ import { manualTitle } from '../../content/manual';
 import { describeSelection, Selection, useGame } from '../../store/game';
 import { Board } from '../board/Board';
 import { BoardViewContext } from '../board/context';
+import { nextMission } from '../shell/MissionPicker';
 
 type Side = 'left' | 'right';
 
@@ -138,6 +139,8 @@ export function DiffPanel({ state }: { state: ReturnType<typeof useDiffState> })
   const answer = useGame((s) => s.diffAnswers[mission.id]);
   const answerDiff = useGame((s) => s.answerDiff);
   const openQuestions = useGame((s) => s.openQuestions);
+  const setMission = useGame((s) => s.setMission);
+  const next = nextMission(mission.id);
   const openManual = useGame((s) => s.openManual);
   const [picked, setPicked] = useState<string | null>(null);
   const chosen = answer?.chosen ?? null;
@@ -202,11 +205,16 @@ export function DiffPanel({ state }: { state: ReturnType<typeof useDiffState> })
             </button>
           ) : (
             <>
-              <p className={answer.correct ? 'allow' : 'deny'}>{answer.correct ? 'Correct on the first try: 3 stars.' : 'Not this time: 1 star. Read why below, then try the transfer questions.'}</p>
+              <p className={answer.correct ? 'allow' : 'deny'}>{answer.correct ? 'Correct on the first try: 3 stars.' : 'Not this time: 1 star. Read why below, then try the practice questions.'}</p>
               <div className="lesson">{d.explanation}</div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+                {next && (
+                  <button className="btn primary" onClick={() => setMission(next.id)}>
+                    Next round →
+                  </button>
+                )}
                 <button className="btn" onClick={() => openQuestions(true)}>
-                  Transfer questions
+                  Practice questions
                 </button>
                 {mission.concepts.slice(0, 3).map((c) => (
                   <button key={c} className="btn ghost small" onClick={() => openManual(c)}>
