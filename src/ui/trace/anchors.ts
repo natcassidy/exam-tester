@@ -6,6 +6,7 @@ export function anchorSelector(board: Board, hop: Hop, prevSubnet: string | null
   const { kind, id } = hop.at;
   if (kind === 'internet') return '[data-node-id="internet"]';
   if (kind === 'service') return '[data-node-id="svc"]';
+  if (kind === 'onprem') return '[data-node-id="onprem"]';
   if (kind === 'component' || kind === 'nat' || kind === 'igw' || kind === 'vpce') return board.components[id] ? `[data-node-id="${id}"]` : null;
   if (kind === 'subnet') return `[data-subnet-id="${id}"]`;
   // Permission checks light up the component that runs as the role, or the bucket the key protects.

@@ -32,7 +32,22 @@ export type ServiceType =
   | 'waf'
   | 'nat'
   | 'igw'
-  | 'vpce';
+  | 'vpce'
+  // Stage 3: multi-Region, hybrid, storage, data.
+  | 'aurora'
+  | 'pcx'
+  | 'tgw'
+  | 'vgw'
+  | 'cgw'
+  | 'vpn'
+  | 'dx'
+  | 'backup'
+  | 'kinesis'
+  | 'firehose'
+  | 'athena'
+  | 'snow'
+  | 'datasync'
+  | 'dms';
 
 // ---------- Board ----------
 
@@ -47,6 +62,17 @@ export interface Board {
   iam?: IamState;
   /** Monotonic counter used to mint deterministic ids. */
   seq: number;
+  /** On-premises data centre (Stage 3). */
+  onprem?: OnPrem;
+}
+
+export interface OnPrem {
+  id: 'onprem';
+  name: string;
+  cidr: string;
+  /** Internet uplink of the data centre, used for VPN throughput and online transfers. */
+  internetMbps: number;
+  components: ComponentId[];
 }
 
 export interface Region {
@@ -59,6 +85,9 @@ export interface Region {
 export interface Vpc {
   id: string;
   cidr: string;
+  /** Owning AWS account (Stage 3 accounts layer). Absent = the board's own account. */
+  accountId?: string;
+  name?: string;
   azs: Az[];
   attachments: ComponentId[];
 }
@@ -97,6 +126,8 @@ export interface Component {
   locked?: boolean;
   /** IAM role the component runs as: EC2 instance profile or Lambda execution role. */
   roleId?: string;
+  /** Owning AWS account (Stage 3). Absent = the board's own account. */
+  accountId?: string;
 }
 
 // ---------- Service configs ----------
@@ -157,9 +188,37 @@ export interface RdsConfig {
   publiclyAccessible: boolean;
   storageEncrypted: boolean;
   allocatedStorageGb: number;
+  /** This instance is a read replica of another RDS instance (cross-Region when it lives in another Region). */
+  replicaOf?: ComponentId | null;
+}
+
+export type AuroraInstanceClass = 'db.r6g.large' | 'db.r6g.xlarge' | 'db.r6g.2xlarge';
+
+export interface AuroraConfig {
+  type: 'aurora';
+  engine: 'aurora-mysql' | 'aurora-postgresql';
+  port: number;
+  instanceClass: AuroraInstanceClass;
+  /** Aurora Replicas in the cluster (reader endpoint). Failover promotes one. */
+  readers: number;
+  serverlessV2: boolean;
+  minAcu: number;
+  maxAcu: number;
+  backupRetentionDays: number;
+  storageEncrypted: boolean;
+  publiclyAccessible: boolean;
+  /** Secondary cluster of an Aurora Global Database whose primary is this component. */
+  globalPrimaryId: ComponentId | null;
 }
 
 export type BucketPolicyPreset = 'none' | 'public-read' | 'cloudfront-oac' | 'custom';
+
+export type S3StorageClass = 'STANDARD' | 'INTELLIGENT_TIERING' | 'STANDARD_IA' | 'ONEZONE_IA' | 'GLACIER_IR' | 'GLACIER' | 'DEEP_ARCHIVE';
+
+export interface LifecycleTransition {
+  afterDays: number;
+  toClass: S3StorageClass;
+}
 
 export interface S3Config {
   type: 's3';
@@ -174,6 +233,15 @@ export interface S3Config {
   customPolicy?: PolicyDocument | null;
   /** Customer managed key for SSE-KMS (null = the AWS managed key aws/s3). */
   kmsKeyId?: string | null;
+  // Stage 3: storage classes, lifecycle, data protection, replication.
+  storageClass?: S3StorageClass;
+  lifecycle?: LifecycleTransition[];
+  /** Lifecycle expiration (days after creation); null = keep forever. */
+  expireAfterDays?: number | null;
+  objectLock?: { mode: 'none' | 'governance' | 'compliance'; retentionDays: number };
+  mfaDelete?: boolean;
+  /** Replication rule to another bucket (CRR when the destination is in another Region). */
+  replication?: { destId: ComponentId | null; replicateDeletes: boolean };
 }
 
 export interface SqsConfig {
@@ -195,6 +263,8 @@ export interface LambdaConfig {
   reservedConcurrency: number | null;
   eventSourceId: ComponentId | null;
   coldStartMs: number;
+  /** Kinesis event sources only: read through an enhanced fan-out consumer (dedicated 2 MB/s per shard). */
+  enhancedFanOut?: boolean;
 }
 
 export interface ApiGwConfig {
@@ -210,6 +280,10 @@ export interface DynamoConfig {
   wcu: number;
   rcu: number;
   pitr: boolean;
+  /** Global table replicas in other Regions (Stage 3). */
+  replicaRegions?: string[];
+  /** A DAX cluster in front of the table in every Region it lives in. */
+  dax?: boolean;
 }
 
 export interface CloudFrontConfig {
@@ -220,10 +294,33 @@ export interface CloudFrontConfig {
   cacheHitRatio: number;
 }
 
+export type Route53Policy = 'simple' | 'weighted' | 'latency' | 'failover' | 'geolocation' | 'geoproximity' | 'multivalue';
+
+export interface Route53Record {
+  id: string;
+  targetId: ComponentId | null;
+  /** Health check (or Evaluate Target Health on an alias): unhealthy records stop being returned. */
+  healthCheck: boolean;
+  weight?: number;
+  failover?: 'primary' | 'secondary';
+  /** Geolocation: continent code (NA, SA, EU, AS, OC, AF) or '*' for the default record. */
+  location?: string;
+  /** Geoproximity bias (-99..99). */
+  bias?: number;
+}
+
 export interface Route53Config {
   type: 'route53';
   recordName: string;
+  /** The target for simple routing. */
   aliasTargetId: ComponentId | null;
+  // Stage 3: routing policies, health checks and TTL.
+  policy?: Route53Policy;
+  records?: Route53Record[];
+  /** Alias records answer with the target's TTL (60 s for load balancers); others use ttlSec. */
+  alias?: boolean;
+  ttlSec?: number;
+  healthCheck?: { intervalSec: 10 | 30; failureThreshold: number };
 }
 
 export interface WafConfig {
@@ -249,6 +346,110 @@ export interface VpceConfig {
   policyDoc?: PolicyDocument | null;
 }
 
+// ---------- Stage 3 configs ----------
+
+export interface PcxConfig {
+  type: 'pcx';
+  /** The accepter VPC. The requester is the VPC this connection is attached to. */
+  peerVpcId: string | null;
+}
+
+export interface TgwRouteTable {
+  id: string;
+  name: string;
+  /** Attachments (VPC ids, or VPN / DX component ids) that use this table for lookups. */
+  associations: string[];
+  /** Attachments whose CIDRs are propagated into this table. */
+  propagations: string[];
+  routes: { dest: string; attachment: string | 'blackhole' }[];
+}
+
+export interface TgwConfig {
+  type: 'tgw';
+  /** VPC attachments, by VPC id. VPN and DX attachments come from connections attached to this TGW. */
+  vpcAttachments: string[];
+  routeTables: TgwRouteTable[];
+  /** Shared with other accounts through AWS RAM. */
+  ramShared: boolean;
+}
+
+export interface VgwConfig {
+  type: 'vgw';
+}
+
+export interface CgwConfig {
+  type: 'cgw';
+  bgpAsn: number;
+}
+
+export interface VpnConfig {
+  type: 'vpn';
+  cgwId: ComponentId | null;
+  /** Virtual private gateway or transit gateway. */
+  attachTo: ComponentId | null;
+}
+
+export interface DxConfig {
+  type: 'dx';
+  speedGbps: 1 | 10 | 100;
+  /** Virtual private gateway or transit gateway (through a Direct Connect gateway). */
+  attachTo: ComponentId | null;
+  /** DX is not encrypted by default: MACsec (10/100 Gbps dedicated) or an IPsec VPN over the connection. */
+  encryption: 'none' | 'macsec' | 'ipsec-vpn';
+}
+
+export interface BackupConfig {
+  type: 'backup';
+  resourceIds: ComponentId[];
+  frequencyHours: number;
+  retentionDays: number;
+  /** Copy every recovery point to a vault in another Region. */
+  copyRegion: string | null;
+  /** The copy vault lives in a separate backup account. */
+  copyToOtherAccount: boolean;
+  vaultLock: 'none' | 'governance' | 'compliance';
+}
+
+export interface KinesisConfig {
+  type: 'kinesis';
+  mode: 'provisioned' | 'onDemand';
+  shards: number;
+  retentionHours: number;
+}
+
+export interface FirehoseConfig {
+  type: 'firehose';
+  /** Kinesis data stream to read from; null = Direct PUT from producers. */
+  sourceId: ComponentId | null;
+  destId: ComponentId | null;
+  bufferSec: number;
+  bufferMb: number;
+  format: 'json' | 'parquet';
+}
+
+export interface AthenaConfig {
+  type: 'athena';
+  sourceId: ComponentId | null;
+}
+
+export interface SnowConfig {
+  type: 'snow';
+  devices: number;
+  destId: ComponentId | null;
+}
+
+export interface DataSyncConfig {
+  type: 'datasync';
+  destId: ComponentId | null;
+  schedule: 'once' | 'hourly' | 'daily';
+}
+
+export interface DmsConfig {
+  type: 'dms';
+  targetId: ComponentId | null;
+  mode: 'full-load' | 'full-load-and-cdc';
+}
+
 export type ServiceConfig =
   | AlbConfig
   | Ec2Config
@@ -264,7 +465,21 @@ export type ServiceConfig =
   | WafConfig
   | NatConfig
   | IgwConfig
-  | VpceConfig;
+  | VpceConfig
+  | AuroraConfig
+  | PcxConfig
+  | TgwConfig
+  | VgwConfig
+  | CgwConfig
+  | VpnConfig
+  | DxConfig
+  | BackupConfig
+  | KinesisConfig
+  | FirehoseConfig
+  | AthenaConfig
+  | SnowConfig
+  | DataSyncConfig
+  | DmsConfig;
 
 export type ConfigOf<T extends ServiceType> = Extract<ServiceConfig, { type: T }>;
 
@@ -331,7 +546,7 @@ export interface Nacl {
 
 // ---------- Trace ----------
 
-export type Endpoint = ComponentId | 'internet' | 'svc:s3' | 'svc:dynamodb';
+export type Endpoint = ComponentId | 'internet' | 'svc:s3' | 'svc:dynamodb' | 'onprem';
 
 export interface Flow {
   from: Endpoint;
@@ -360,10 +575,15 @@ export type HopCheck =
   | 'az'
   | 'exists'
   | 'endpoint-policy'
-  | 'iam';
+  | 'iam'
+  | 'peering'
+  | 'tgw'
+  | 'vpn'
+  | 'dx'
+  | 'region';
 
 export interface HopAt {
-  kind: 'component' | 'subnet' | 'igw' | 'nat' | 'vpce' | 'internet' | 'service' | 'routeTable' | 'sg' | 'nacl' | 'role' | 'key';
+  kind: 'component' | 'subnet' | 'igw' | 'nat' | 'vpce' | 'internet' | 'service' | 'routeTable' | 'sg' | 'nacl' | 'role' | 'key' | 'onprem';
   id: string;
 }
 
@@ -377,7 +597,7 @@ export interface Hop {
   iam?: IamDecision;
 }
 
-export type PathVia = 'local' | 'igw' | 'nat' | 'vpce' | 'edge' | 'none';
+export type PathVia = 'local' | 'igw' | 'nat' | 'vpce' | 'edge' | 'none' | 'pcx' | 'tgw' | 'vpn' | 'dx';
 
 export interface Trace {
   result: 'delivered' | 'dropped';
@@ -388,11 +608,29 @@ export interface Trace {
   latencyMs?: number;
   /** Per-source-subnet results for multi-subnet sources. */
   paths?: { subnetId: string; result: 'delivered' | 'dropped'; via: PathVia }[];
+  /** VPN or Direct Connect connection that carried the flow (Stage 3). */
+  linkId?: string;
 }
 
 // ---------- Simulation ----------
 
-export type EventKind = 'reachability' | 'traffic' | 'azOutage' | 'audit' | 'queueBehavior' | 'bill' | 'iamAccess' | 'fleetHealth';
+export type EventKind =
+  | 'reachability'
+  | 'traffic'
+  | 'azOutage'
+  | 'audit'
+  | 'queueBehavior'
+  | 'bill'
+  | 'iamAccess'
+  | 'fleetHealth'
+  // Stage 3
+  | 'regionOutage'
+  | 'dataLoss'
+  | 'migration'
+  | 'connectivity'
+  | 'globalLatency'
+  | 'storageLifecycle'
+  | 'streamIngest';
 
 export interface EventSpec {
   id: string;
@@ -464,6 +702,24 @@ export interface UsageProfile {
   dynamoReads?: number;
   dynamoStorageGb?: number;
   rdsStorageGb?: number;
+  // Stage 3
+  /** Data crossing between Regions per month (replication, cross-Region reads). */
+  crossRegionGb?: number;
+  /** Data between VPCs (peering or Transit Gateway) per month. */
+  interVpcGb?: number;
+  /** Data from AWS to on-premises over VPN / Direct Connect per month. */
+  hybridOutGb?: number;
+  /** Bytes protected by AWS Backup (per protected resource). */
+  backupGb?: number;
+  /** Streaming ingest. */
+  streamEventsPerSec?: number;
+  streamAvgKb?: number;
+  /** Data Athena would scan per month if it were stored as JSON. */
+  athenaJsonTbScanned?: number;
+  /** One-time migration volume, shown amortised over one month. */
+  migrationTb?: number;
+  /** Data changed during the migration window that an online sync has to copy. */
+  migrationChangeGb?: number;
 }
 
 export interface CostLineItem {
@@ -485,18 +741,26 @@ export interface LayoutSubnet {
   naclId?: string;
 }
 
+export interface VpcSpec {
+  id: string;
+  cidr: string;
+  name?: string;
+  accountId?: string;
+  azs: { id: string; name: string }[];
+  subnets: LayoutSubnet[];
+  routeTables: { id: string; name: string; routes: Route[] }[];
+  /** Pre-placed IGW (prewired in helpful missions). Its id is igw-1 for the first VPC, igw-<vpc id> otherwise. */
+  igw?: boolean;
+}
+
 export interface VpcLayout {
   regionId: string;
   regionName: string;
-  vpc?: {
-    id: string;
-    cidr: string;
-    azs: { id: string; name: string }[];
-    subnets: LayoutSubnet[];
-    routeTables: { id: string; name: string; routes: Route[] }[];
-    /** Pre-placed IGW (prewired in helpful missions). */
-    igw?: boolean;
-  };
+  vpc?: VpcSpec;
+  /** Stage 3: more VPCs, in this Region or in others. */
+  extraVpcs?: { regionId: string; regionName: string; vpc?: VpcSpec }[];
+  /** Stage 3: an on-premises data centre. */
+  onprem?: { name: string; cidr: string; internetMbps: number };
 }
 
 export interface Requirement {

@@ -1,13 +1,20 @@
 // Packet tracer: follows a flow hop by hop using real VPC semantics.
 
-import type { Board, Component, ConfigOf, Endpoint, Flow, Hop, PathVia, Protocol, SecurityGroup, Trace } from '../model';
-import { eniIp, subnetsOf } from '../board';
+import type { Board, Component, ConfigOf, Endpoint, Flow, Hop, PathVia, Protocol, SecurityGroup, Trace, TgwRouteTable } from '../model';
+import { eniIp, pcxConnects, regionOf, regionOfVpc, subnetsOf, vpcById } from '../board';
 import { evaluateNacl, RETURN_PORT } from './nacl';
 import { describeSgRule, evaluateSgs } from './sg';
 import { findSubnet, INTERNET_IP, resolveRoute, SERVICE_IPS, targetId, targetKind } from './routing';
+import { cidrContainsIp, hostIp, isValidCidr, parseCidr } from './cidr';
+import { CITIES, cityRtt, regionName } from './geo';
+import { resolveDns } from './dns';
 
 export interface TraceOptions {
   failedAzs?: string[];
+  /** Regions that are completely down (Stage 3). */
+  failedRegions?: string[];
+  /** VPN or Direct Connect connections (component ids) that are down. */
+  failedLinks?: string[];
 }
 
 export interface Eni {
@@ -19,13 +26,15 @@ export interface Eni {
   publicIp: boolean;
 }
 
-type External = { kind: 'external'; ip: string; label: string; service?: 's3' | 'dynamodb' };
+type External = { kind: 'external'; ip: string; label: string; service?: 's3' | 'dynamodb'; onprem?: boolean };
 
 interface LegResult {
   ok: boolean;
   hops: Hop[];
   returnHops: Hop[];
   via: PathVia;
+  /** VPN or DX connection that carried the flow. */
+  linkId?: string;
 }
 
 // ---------- ENIs ----------
@@ -41,19 +50,21 @@ export function asgSpread(c: Component, failedAzs: string[] = [], board?: Board)
 
 /** The subnet holding the RDS primary. After an AZ failure, Multi-AZ fails over to the standby. */
 export function rdsPrimarySubnet(board: Board, c: Component, failedAzs: string[] = []): string | null {
-  const cfg = c.config as ConfigOf<'rds'>;
+  const cfg = c.config as ConfigOf<'rds'> | ConfigOf<'aurora'>;
   const subs = subnetsOf(c);
   const primary = subs[0];
   const az = findSubnet(board, primary)?.subnet.azId;
   if (!az || !failedAzs.includes(az)) return primary;
-  if (!cfg.multiAz) return null;
+  // Aurora storage spans three AZs, so a writer can always be brought up elsewhere.
+  if (cfg.type === 'rds' && !cfg.multiAz) return null;
   return subs.find((s) => !failedAzs.includes(findSubnet(board, s)?.subnet.azId ?? '')) ?? null;
 }
 
-export function enisOf(board: Board, c: Component, failedAzs: string[] = []): Eni[] {
+export function enisOf(board: Board, c: Component, failedAzs: string[] = [], failedRegions: string[] = []): Eni[] {
   if (c.placement.kind !== 'subnet') return [];
+  if (failedRegions.length && failedRegions.includes(regionOf(board, c))) return [];
   let subs = subnetsOf(c);
-  if (c.type === 'rds') {
+  if (c.type === 'rds' || c.type === 'aurora') {
     const p = rdsPrimarySubnet(board, c, failedAzs);
     subs = p ? [p] : [];
   }
@@ -64,7 +75,7 @@ export function enisOf(board: Board, c: Component, failedAzs: string[] = []): En
   const pub = (() => {
     const cfg = c.config;
     if (cfg.type === 'ec2' || cfg.type === 'asg') return cfg.publicIp;
-    if (cfg.type === 'rds') return cfg.publiclyAccessible;
+    if (cfg.type === 'rds' || cfg.type === 'aurora') return cfg.publiclyAccessible;
     if (cfg.type === 'alb') return cfg.scheme === 'internet-facing';
     if (cfg.type === 'nat') return true;
     return false;
@@ -194,11 +205,25 @@ function leg(board: Board, src: Eni, dst: Eni | External, p: Protocol, port: num
       hops.push(routeHop('deny', ' Nothing in the VPC has that address.'));
       return fail();
     }
+    const dVpc = findSubnet(board, dst.subnetId)!.vpc;
+    const sVpc = findSubnet(board, src.subnetId)!.vpc;
+    if (dVpc.id !== sVpc.id) {
+      hops.push(routeHop('deny', ` ${dstIp} is inside this VPC's own CIDR (${sVpc.cidr}), so the local route catches it, but ${dst.comp.name} lives in ${dVpc.name ?? dVpc.id} (${dVpc.cidr}). Overlapping CIDRs can never be routed to each other: re-address one VPC.`));
+      return fail();
+    }
     hops.push(routeHop('allow'));
   } else {
     const target = tId ? board.components[tId] : undefined;
     if (!target) {
       hops.push(routeHop('deny', ` The target no longer exists, so this is a blackhole route.`));
+      return fail();
+    }
+    if (kind === 'pcx' || kind === 'tgw' || kind === 'vgw') {
+      hops.push(routeHop('allow'));
+      return crossVpc(board, src, dst, kind, target, hops, p, port, opts);
+    }
+    if ('kind' in dst && dst.onprem) {
+      hops.push(routeHop('deny', ` ${dstLabel} is a private on-premises address: it isn't reachable over the internet. Route the on-premises CIDR to a virtual private gateway or transit gateway with a VPN or Direct Connect connection.`));
       return fail();
     }
     if (!('kind' in dst)) {
@@ -292,7 +317,7 @@ function leg(board: Board, src: Eni, dst: Eni | External, p: Protocol, port: num
       return { ok: r.result !== 'deny', hops, returnHops, via };
     }
 
-    hops.push({ at: { kind: 'routeTable', id: rt!.id }, check: 'route', result: 'deny', explain: `${kind} targets arrive in a later stage.` });
+    hops.push({ at: { kind: 'routeTable', id: rt!.id }, check: 'route', result: 'deny', explain: `${kind} targets are not modelled.` });
     return fail();
   }
 
@@ -319,6 +344,299 @@ function leg(board: Board, src: Eni, dst: Eni | External, p: Protocol, port: num
     returnHops.push({ at: { kind: 'subnet', id: d.subnetId }, check: 'nacl-in', result: 'info', explain: 'Same subnet: traffic never crosses the subnet boundary, so NACLs are not evaluated.' });
   }
   return { ok: true, hops, returnHops, via };
+}
+
+// ---------- Between VPCs and to on-premises (Stage 3) ----------
+
+const ONPREM_HOST = 10;
+
+export function onpremIp(board: Board): string {
+  return board.onprem ? hostIp(board.onprem.cidr, ONPREM_HOST) : '192.168.0.10';
+}
+
+function vpcLabel(board: Board, vpcId: string): string {
+  const v = vpcById(board, vpcId);
+  return v ? `${v.name ?? v.id} (${v.cidr})` : vpcId;
+}
+
+/** VPN and DX connections on a gateway that are up, Direct Connect first (AWS prefers DX routes over VPN for the same prefix). */
+export function linksOn(board: Board, gatewayId: string, failedLinks: string[] = []): Component[] {
+  return Object.values(board.components)
+    .filter((c) => (c.config.type === 'vpn' || c.config.type === 'dx') && c.config.attachTo === gatewayId && !failedLinks.includes(c.id))
+    .filter((c) => c.config.type !== 'vpn' || !!c.config.cgwId)
+    .sort((a, b) => (a.type === 'dx' ? 0 : 1) - (b.type === 'dx' ? 0 : 1));
+}
+
+function linkHop(_board: Board, link: Component, toward: string): Hop {
+  if (link.config.type === 'dx') {
+    const enc = link.config.encryption === 'none' ? 'not encrypted (Direct Connect does not encrypt by default)' : link.config.encryption === 'macsec' ? 'encrypted with MACsec at layer 2' : 'encrypted by an IPsec VPN running over the connection';
+    return { at: { kind: 'component', id: link.id }, check: 'dx', result: 'allow', explain: `${link.name}: a private ${link.config.speedGbps} Gbps Direct Connect link carries the packet ${toward}. Consistent bandwidth and latency, ${enc}.` };
+  }
+  return { at: { kind: 'component', id: link.id }, check: 'vpn', result: 'allow', explain: `${link.name}: an IPsec Site-to-Site VPN tunnel carries the packet ${toward} over the internet. Encrypted, up to ~1.25 Gbps per tunnel, and latency varies with the internet path.` };
+}
+
+function attachmentLabel(board: Board, a: string): string {
+  return board.components[a]?.name ?? vpcLabel(board, a);
+}
+
+export interface TgwLookup {
+  rt?: TgwRouteTable;
+  route?: { dest: string; attachment: string; propagated: boolean };
+}
+
+/** CIDR an attachment propagates into TGW route tables. */
+function attachmentCidr(board: Board, tgw: Component, a: string): string | null {
+  const cfg = tgw.config as ConfigOf<'tgw'>;
+  if (cfg.vpcAttachments.includes(a)) return vpcById(board, a)?.cidr ?? null;
+  const c = board.components[a];
+  if (c && (c.config.type === 'vpn' || c.config.type === 'dx') && c.config.attachTo === tgw.id) return board.onprem?.cidr ?? null;
+  return null;
+}
+
+/** All attachments of a TGW: VPCs plus the VPN / DX connections attached to it. */
+export function tgwAttachments(board: Board, tgw: Component): string[] {
+  const cfg = tgw.config as ConfigOf<'tgw'>;
+  const links = Object.values(board.components).filter((c) => (c.config.type === 'vpn' || c.config.type === 'dx') && c.config.attachTo === tgw.id).map((c) => c.id);
+  return [...cfg.vpcAttachments, ...links];
+}
+
+/** Longest-prefix lookup in the TGW route table associated with an attachment. Down links withdraw their propagated routes. */
+export function tgwLookup(board: Board, tgw: Component, fromAttachment: string, ip: string, failedLinks: string[] = []): TgwLookup {
+  const cfg = tgw.config as ConfigOf<'tgw'>;
+  const rt = cfg.routeTables.find((r) => r.associations.includes(fromAttachment));
+  if (!rt) return {};
+  const cands: { dest: string; attachment: string; propagated: boolean; pref: number }[] = [];
+  for (const r of rt.routes) if (isValidCidr(r.dest) && cidrContainsIp(r.dest, ip)) cands.push({ ...r, propagated: false, pref: 0 });
+  for (const a of rt.propagations) {
+    if (failedLinks.includes(a)) continue;
+    const cidr = attachmentCidr(board, tgw, a);
+    if (cidr && cidrContainsIp(cidr, ip)) cands.push({ dest: cidr, attachment: a, propagated: true, pref: board.components[a]?.type === 'vpn' ? 2 : 1 });
+  }
+  cands.sort((x, y) => parseCidr(y.dest).prefix - parseCidr(x.dest).prefix || x.pref - y.pref);
+  const best = cands[0];
+  return { rt, route: best && { dest: best.dest, attachment: best.attachment, propagated: best.propagated } };
+}
+
+function tgwHop(board: Board, tgw: Component, from: string, ip: string, l: TgwLookup, direction = ''): Hop {
+  if (!l.rt)
+    return { at: { kind: 'component', id: tgw.id }, check: 'tgw', result: 'deny', matched: { objectId: tgw.id, ruleRef: 'route tables' }, explain: `${direction}${attachmentLabel(board, from)} is attached to ${tgw.name} but not associated with any TGW route table, so the transit gateway has nowhere to look up ${ip} and drops it.` };
+  if (!l.route)
+    return { at: { kind: 'component', id: tgw.id }, check: 'tgw', result: 'deny', matched: { objectId: tgw.id, ruleRef: `route table ${l.rt.name}` }, explain: `${direction}${tgw.name} route table "${l.rt.name}" (associated with ${attachmentLabel(board, from)}) has no route to ${ip}. Propagate the destination attachment into this table or add a static route.` };
+  if (l.route.attachment === 'blackhole')
+    return { at: { kind: 'component', id: tgw.id }, check: 'tgw', result: 'deny', matched: { objectId: tgw.id, ruleRef: `route table ${l.rt.name}` }, explain: `${direction}${tgw.name} route table "${l.rt.name}" has a blackhole route for ${l.route.dest}: matching traffic is dropped on purpose.` };
+  return {
+    at: { kind: 'component', id: tgw.id },
+    check: 'tgw',
+    result: 'allow',
+    matched: { objectId: tgw.id, ruleRef: `route table ${l.rt.name}` },
+    explain: `${direction}${tgw.name} route table "${l.rt.name}" (associated with ${attachmentLabel(board, from)}): longest match for ${ip} is ${l.route.dest} → ${attachmentLabel(board, l.route.attachment)} (${l.route.propagated ? 'propagated' : 'static'}).`,
+  };
+}
+
+/** Can a subnet's route table send traffic for `ip` back into `toVpcId`? */
+function returnPath(board: Board, fromSubnetId: string, ip: string, toVpcId: string, opts: TraceOptions): Hop {
+  const f = findSubnet(board, fromSubnetId)!;
+  const rt = board.routeTables[f.subnet.routeTableId];
+  const m = rt ? resolveRoute(board, rt.id, ip) : null;
+  const deny = (why: string): Hop => ({ at: { kind: 'routeTable', id: f.subnet.routeTableId }, check: 'route', result: 'deny', matched: { objectId: f.subnet.routeTableId, ruleRef: m ? `route ${m.route.dest}` : 'routes' }, explain: `No way back: ${rt?.name ?? f.subnet.routeTableId} (${f.subnet.name}) ${why} Routing must be configured on both sides.` });
+  if (!m || m.route.target === 'local') return deny(`has no route to ${ip}.`);
+  const k = targetKind(m.route.target);
+  const t = board.components[targetId(m.route.target)!];
+  if (!t) return deny(`sends ${ip} to a deleted target (blackhole).`);
+  const ok = (explain: string): Hop => ({ at: { kind: 'routeTable', id: rt!.id }, check: 'route', result: 'allow', matched: { objectId: rt!.id, ruleRef: `route ${m.route.dest}` }, explain });
+  if (k === 'pcx') {
+    if (pcxConnects(board, t, f.vpc.id, toVpcId)) return ok(`${rt!.name} routes the response to ${ip} back over ${t.name}.`);
+    return deny(`sends ${ip} to ${t.name}, which doesn't lead to ${vpcLabel(board, toVpcId)}.`);
+  }
+  if (k === 'tgw') {
+    const l = tgwLookup(board, t, f.vpc.id, ip, opts.failedLinks);
+    if (l.route && l.route.attachment === toVpcId) return ok(`${rt!.name} routes the response to ${ip} to ${t.name}, and its route table "${l.rt!.name}" sends it on to ${vpcLabel(board, toVpcId)}.`);
+    return { ...tgwHop(board, t, f.vpc.id, ip, l, 'Return path: '), result: 'deny' };
+  }
+  return deny(`sends ${ip} to ${t.name} (${k}), not back toward ${vpcLabel(board, toVpcId)}.`);
+}
+
+/** Can the response from an ENI reach the on-premises network? */
+function returnToOnprem(board: Board, fromSubnetId: string, opts: TraceOptions): Hop {
+  const ip = onpremIp(board);
+  const f = findSubnet(board, fromSubnetId)!;
+  const rt = board.routeTables[f.subnet.routeTableId];
+  const m = rt ? resolveRoute(board, rt.id, ip) : null;
+  const deny = (why: string): Hop => ({ at: { kind: 'routeTable', id: f.subnet.routeTableId }, check: 'route', result: 'deny', matched: { objectId: f.subnet.routeTableId, ruleRef: m ? `route ${m.route.dest}` : 'routes' }, explain: `No way back to on-premises: ${rt?.name ?? f.subnet.routeTableId} (${f.subnet.name}) ${why} Add ${board.onprem?.cidr ?? 'the on-premises CIDR'} → the virtual private gateway or transit gateway.` });
+  if (!m || m.route.target === 'local') return deny(`has no route to ${ip}.`);
+  const k = targetKind(m.route.target);
+  const t = board.components[targetId(m.route.target)!];
+  if (!t) return deny(`sends ${ip} to a deleted target (blackhole).`);
+  if (k === 'vgw' && linksOn(board, t.id, opts.failedLinks).length) return { at: { kind: 'routeTable', id: rt!.id }, check: 'route', result: 'allow', matched: { objectId: rt!.id, ruleRef: `route ${m.route.dest}` }, explain: `${rt!.name} routes the response to on-premises through ${t.name}.` };
+  if (k === 'tgw') {
+    const l = tgwLookup(board, t, f.vpc.id, ip, opts.failedLinks);
+    const link = l.route && board.components[l.route.attachment];
+    if (link && (link.type === 'vpn' || link.type === 'dx')) return { at: { kind: 'routeTable', id: rt!.id }, check: 'route', result: 'allow', matched: { objectId: rt!.id, ruleRef: `route ${m.route.dest}` }, explain: `${rt!.name} routes the response to ${t.name}, whose route table "${l.rt!.name}" sends it over ${link.name}.` };
+    return { ...tgwHop(board, t, f.vpc.id, ip, l, 'Return path: '), result: 'deny' };
+  }
+  return deny(`sends ${ip} to ${t.name} (${k}), which doesn't lead to the data centre.`);
+}
+
+interface Peer {
+  ip: string;
+  label: string;
+  sgIds: string[];
+  /** Source subnet whose NACL sees the response (absent for on-premises sources). */
+  subnetId?: string;
+}
+
+/** Arriving in another VPC: destination NACL and SG, then the return route and stateless return checks. */
+function arrive(board: Board, from: Peer, d: Eni, p: Protocol, port: number, hops: Hop[], back: Hop, via: PathVia, linkId?: string): LegResult {
+  const returnHops: Hop[] = [];
+  const dLabel = `${d.comp.name} (${d.ip})`;
+  const n = naclCheck(board, d.subnetId, 'inbound', p, port, from.ip, from.label);
+  hops.push(n);
+  if (n.result === 'deny') return { ok: false, hops, returnHops, via, linkId };
+  const sgIn = sgCheck(board, d, 'inbound', p, port, { ip: from.ip, sgIds: from.sgIds, label: from.label });
+  hops.push(sgIn);
+  if (sgIn.result === 'deny') return { ok: false, hops, returnHops, via, linkId };
+  returnHops.push({ at: { kind: 'sg', id: d.sgIds[0] ?? d.comp.id }, check: 'sg-out', result: 'info', explain: `Security groups are stateful: ${d.comp.name}'s response is allowed out automatically.` });
+  const r1 = naclCheck(board, d.subnetId, 'outbound', p, RETURN_PORT, from.ip, from.label, true);
+  returnHops.push(r1);
+  if (r1.result === 'deny') return { ok: false, hops, returnHops, via, linkId };
+  returnHops.push(back);
+  if (back.result === 'deny') return { ok: false, hops, returnHops, via, linkId };
+  if (from.subnetId) {
+    const r2 = naclCheck(board, from.subnetId, 'inbound', p, RETURN_PORT, d.ip, dLabel, true);
+    returnHops.push(r2);
+    if (r2.result === 'deny') return { ok: false, hops, returnHops, via, linkId };
+  }
+  return { ok: true, hops, returnHops, via, linkId };
+}
+
+function crossVpc(board: Board, src: Eni, dst: Eni | External, kind: 'pcx' | 'tgw' | 'vgw', target: Component, hops: Hop[], p: Protocol, port: number, opts: TraceOptions): LegResult {
+  const srcVpc = findSubnet(board, src.subnetId)!.vpc;
+  const failedRegions = opts.failedRegions ?? [];
+  const dstLabel = 'kind' in dst ? dst.label : `${dst.comp.name} (${dst.ip})`;
+  const from: Peer = { ip: src.ip, label: `${src.comp.name} (${src.ip}) [${sgNames(board, src.sgIds)}]`, sgIds: src.sgIds, subnetId: src.subnetId };
+  const deny = (h: Omit<Hop, 'result'>, via: PathVia): LegResult => {
+    hops.push({ ...h, result: 'deny' });
+    return { ok: false, hops, returnHops: [], via };
+  };
+
+  if (kind === 'pcx') {
+    const cfg = target.config as ConfigOf<'pcx'>;
+    const other = target.placement.refId === srcVpc.id ? cfg.peerVpcId : cfg.peerVpcId === srcVpc.id ? target.placement.refId : null;
+    if (!other) return deny({ at: { kind: 'component', id: target.id }, check: 'peering', explain: `${target.name} does not connect ${vpcLabel(board, srcVpc.id)} to anything.` }, 'pcx');
+    if (failedRegions.includes(regionOfVpc(board, other) ?? '')) return deny({ at: { kind: 'component', id: target.id }, check: 'region', explain: `The peer VPC's Region (${regionOfVpc(board, other)}) is down.` }, 'pcx');
+    if ('kind' in dst)
+      return deny({ at: { kind: 'component', id: target.id }, check: 'peering', matched: { objectId: target.id, ruleRef: 'edge-to-edge' }, explain: `Edge-to-edge routing is not supported: ${target.name} only delivers to addresses inside ${vpcLabel(board, other)}. The peer VPC's internet gateway, NAT gateway, VPN or Direct Connect can't be used on your behalf, so ${dstLabel} is unreachable this way.` }, 'pcx');
+    const dVpc = findSubnet(board, dst.subnetId)!.vpc;
+    if (dVpc.id !== other)
+      return deny({ at: { kind: 'component', id: target.id }, check: 'peering', matched: { objectId: target.id, ruleRef: 'not transitive' }, explain: `Peering is not transitive: ${target.name} joins ${vpcLabel(board, srcVpc.id)} and ${vpcLabel(board, other)}, but ${dst.comp.name} lives in ${vpcLabel(board, dVpc.id)}. Traffic can't hop through a peered VPC to reach a third one. Peer the two VPCs directly, or use a transit gateway.` }, 'pcx');
+    const inter = regionOfVpc(board, other) !== regionOfVpc(board, srcVpc.id);
+    hops.push({ at: { kind: 'component', id: target.id }, check: 'peering', result: 'allow', explain: `${target.name} carries the packet from ${vpcLabel(board, srcVpc.id)} into ${vpcLabel(board, other)}${inter ? ' across Regions on the AWS backbone (encrypted, inter-Region data transfer charges apply)' : ''}. No gateway, no bandwidth bottleneck, no single point of failure.` });
+    return arrive(board, from, dst, p, port, hops, returnPath(board, dst.subnetId, src.ip, srcVpc.id, opts), 'pcx');
+  }
+
+  if (kind === 'tgw') {
+    const cfg = target.config as ConfigOf<'tgw'>;
+    if (failedRegions.includes(regionOf(board, target))) return deny({ at: { kind: 'component', id: target.id }, check: 'region', explain: `${target.name}'s Region is down.` }, 'tgw');
+    if (!cfg.vpcAttachments.includes(srcVpc.id)) return deny({ at: { kind: 'component', id: target.id }, check: 'tgw', matched: { objectId: target.id, ruleRef: 'attachments' }, explain: `${vpcLabel(board, srcVpc.id)} has no attachment on ${target.name}.` }, 'tgw');
+    const ip = 'kind' in dst ? dst.ip : dst.ip;
+    const l = tgwLookup(board, target, srcVpc.id, ip, opts.failedLinks);
+    const h = tgwHop(board, target, srcVpc.id, ip, l);
+    hops.push(h);
+    if (h.result === 'deny') return { ok: false, hops, returnHops: [], via: 'tgw' };
+    const a = l.route!.attachment;
+    const link = board.components[a];
+    if (link && (link.type === 'vpn' || link.type === 'dx')) {
+      if (!('kind' in dst) || !dst.onprem) return deny({ at: { kind: 'component', id: target.id }, check: 'tgw', explain: `That route leads to the data centre over ${link.name}, but ${dstLabel} isn't there.` }, 'tgw');
+      hops.push(linkHop(board, link, 'to the data centre'));
+      const returnHops: Hop[] = [{ at: { kind: 'onprem', id: 'onprem' }, check: 'route', result: 'info', explain: `The on-premises router learned ${srcVpc.cidr} over BGP and sends the response back over ${link.name}.` }];
+      const back = tgwLookup(board, target, link.id, src.ip, opts.failedLinks);
+      const bh = tgwHop(board, target, link.id, src.ip, back, 'Return path: ');
+      if (bh.result === 'allow' && back.route!.attachment !== srcVpc.id) bh.result = 'deny';
+      returnHops.push(bh);
+      if (bh.result === 'deny') return { ok: false, hops, returnHops, via: link.type as PathVia, linkId: link.id };
+      const r = naclCheck(board, src.subnetId, 'inbound', p, RETURN_PORT, dst.ip, dst.label, true);
+      returnHops.push(r);
+      return { ok: r.result !== 'deny', hops, returnHops, via: link.type as PathVia, linkId: link.id };
+    }
+    if ('kind' in dst) return deny({ at: { kind: 'component', id: target.id }, check: 'tgw', explain: `That route leads into ${vpcLabel(board, a)}, but ${dstLabel} isn't there. Centralised egress through another VPC is not modelled.` }, 'tgw');
+    const dVpc = findSubnet(board, dst.subnetId)!.vpc;
+    if (a !== dVpc.id) return deny({ at: { kind: 'component', id: target.id }, check: 'tgw', explain: `The TGW sends ${ip} to ${attachmentLabel(board, a)}, but ${dst.comp.name} lives in ${vpcLabel(board, dVpc.id)}.` }, 'tgw');
+    return arrive(board, from, dst, p, port, hops, returnPath(board, dst.subnetId, src.ip, srcVpc.id, opts), 'tgw');
+  }
+
+  // Virtual private gateway: the only way on is a VPN or Direct Connect connection to the data centre.
+  if (target.placement.refId !== srcVpc.id) return deny({ at: { kind: 'component', id: target.id }, check: 'route', explain: `${target.name} is attached to another VPC.` }, 'vpn');
+  if (!('kind' in dst) || !dst.onprem) return deny({ at: { kind: 'component', id: target.id }, check: 'vpn', explain: `${target.name} only leads to networks connected by VPN or Direct Connect. ${dstLabel} isn't one of them.` }, 'vpn');
+  const all = Object.values(board.components).filter((c) => (c.config.type === 'vpn' || c.config.type === 'dx') && c.config.attachTo === target.id);
+  const up = linksOn(board, target.id, opts.failedLinks);
+  if (!up.length) {
+    const why = all.length ? `${all.map((c) => c.name).join(' and ')} ${all.length > 1 ? 'are' : 'is'} down, and there is no other connection to fail over to.` : 'No VPN or Direct Connect connection is attached to it.';
+    return deny({ at: { kind: 'component', id: target.id }, check: all.length ? (all[0].type as 'vpn' | 'dx') : 'vpn', explain: `${target.name}: ${why}` }, 'vpn');
+  }
+  const link = up[0];
+  hops.push(linkHop(board, link, 'to the data centre'));
+  const failedOver = all.length > up.length ? ` ${all.filter((c) => !up.includes(c)).map((c) => c.name).join(', ')} is down; BGP withdrew its routes and traffic failed over.` : '';
+  if (failedOver) hops[hops.length - 1].explain += failedOver;
+  const returnHops: Hop[] = [{ at: { kind: 'onprem', id: 'onprem' }, check: 'route', result: 'info', explain: `The on-premises router learned ${srcVpc.cidr} over BGP and sends the response back over ${link.name}.` }];
+  const r = naclCheck(board, src.subnetId, 'inbound', p, RETURN_PORT, dst.ip, dst.label, true);
+  returnHops.push(r);
+  return { ok: r.result !== 'deny', hops, returnHops, via: link.type as PathVia, linkId: link.id };
+}
+
+/** From a host in the data centre to an ENI in a VPC, over whichever connection BGP prefers. */
+function traceFromOnprem(board: Board, dstComp: Component, p: Protocol, port: number, opts: TraceOptions): Trace {
+  const failed = opts.failedAzs ?? [];
+  if (!board.onprem) return dropped([{ at: { kind: 'onprem', id: 'onprem' }, check: 'exists', result: 'deny', explain: 'There is no on-premises data centre on this board.' }]);
+  const ip = onpremIp(board);
+  const from: Peer = { ip, label: `on-premises host ${ip}`, sgIds: [] };
+  const enis = enisOf(board, dstComp, failed, opts.failedRegions);
+  if (dstComp.placement.kind !== 'subnet') return dropped([{ at: { kind: 'component', id: dstComp.id }, check: 'exists', result: 'deny', explain: `${dstComp.name} is a regional service with a public endpoint; private connectivity to it needs an interface endpoint, which is not modelled.` }]);
+  if (!enis.length) return dropped([{ at: { kind: 'component', id: dstComp.id }, check: 'az', result: 'deny', explain: `${dstComp.name} has no running interface.` }]);
+  const all = Object.values(board.components).filter((c) => (c.config.type === 'vpn' || c.config.type === 'dx') && c.config.attachTo);
+  const links = all.filter((c) => !(opts.failedLinks ?? []).includes(c.id) && (c.config.type !== 'vpn' || c.config.cgwId)).sort((a, b) => (a.type === 'dx' ? 0 : 1) - (b.type === 'dx' ? 0 : 1));
+  if (!links.length) {
+    const why = all.length ? `${all.map((c) => c.name).join(' and ')} ${all.length > 1 ? 'are' : 'is'} down and nothing else connects the data centre to AWS.` : 'Nothing connects the data centre to AWS: add a customer gateway and a Site-to-Site VPN, or a Direct Connect connection.';
+    return dropped([{ at: { kind: 'onprem', id: 'onprem' }, check: all.length ? (all[0].type as 'vpn' | 'dx') : 'vpn', result: 'deny', explain: why }]);
+  }
+  let firstFail: Trace | null = null;
+  for (const link of links) {
+    const gw = board.components[(link.config as ConfigOf<'vpn'> | ConfigOf<'dx'>).attachTo!];
+    if (!gw) continue;
+    for (const d of enis) {
+      const hops: Hop[] = [{ at: { kind: 'onprem', id: 'onprem' }, check: 'route', result: 'info', explain: `The on-premises router has a route to ${d.ip} over ${link.name}${links.length > 1 && link === links[0] && link.type === 'dx' ? ' (BGP prefers Direct Connect over VPN for the same prefix)' : ''}.` }, linkHop(board, link, 'into AWS')];
+      const dVpc = findSubnet(board, d.subnetId)!.vpc;
+      let back: Hop;
+      let via: PathVia = link.type as PathVia;
+      if (gw.type === 'vgw') {
+        if (gw.placement.refId !== dVpc.id) {
+          hops.push({ at: { kind: 'component', id: gw.id }, check: 'route', result: 'deny', explain: `${link.name} lands on ${gw.name}, which is attached to ${vpcLabel(board, gw.placement.refId)}. ${dstComp.name} is in ${vpcLabel(board, dVpc.id)}: a VPC never forwards VPN or DX traffic on to another VPC (no transitive routing). Use a transit gateway.` });
+          firstFail ??= dropped(hops, [], via);
+          continue;
+        }
+        hops.push({ at: { kind: 'component', id: gw.id }, check: 'route', result: 'allow', explain: `${gw.name} delivers the packet into ${vpcLabel(board, dVpc.id)}.` });
+        back = returnToOnprem(board, d.subnetId, opts);
+      } else {
+        if ((opts.failedRegions ?? []).includes(regionOf(board, gw))) continue;
+        const l = tgwLookup(board, gw, link.id, d.ip, opts.failedLinks);
+        const h = tgwHop(board, gw, link.id, d.ip, l);
+        if (h.result === 'allow' && l.route!.attachment !== dVpc.id) {
+          h.result = 'deny';
+          h.explain += ` ${dstComp.name} is not in that VPC.`;
+        }
+        hops.push(h);
+        if (h.result === 'deny') {
+          firstFail ??= dropped(hops, [], via);
+          continue;
+        }
+        back = returnToOnprem(board, d.subnetId, opts);
+      }
+      const r = arrive(board, from, d, p, port, hops, back, via, link.id);
+      const t: Trace = { result: r.ok ? 'delivered' : 'dropped', hops: r.hops, returnHops: r.returnHops, via, linkId: link.id };
+      if (r.ok) return t;
+      firstFail ??= t;
+    }
+  }
+  return firstFail ?? dropped([{ at: { kind: 'onprem', id: 'onprem' }, check: 'route', result: 'deny', explain: `No connection leads to ${dstComp.name}'s VPC.` }]);
 }
 
 /** Internet client to an ENI (EC2, RDS, internet-facing ALB node). */
@@ -374,7 +692,7 @@ function albToTargets(board: Board, alb: Component, nodes: Eni[], p: Protocol, o
     hops.push({ at: { kind: 'component', id: alb.id }, check: 'lb-target-health', result: 'deny', explain: `${alb.name}'s target group is empty. The listener answers with HTTP 503.` });
     return { ok: false, hops, returnHops: [], via: 'local' };
   }
-  const targets = enisOf(board, target, opts.failedAzs);
+  const targets = enisOf(board, target, opts.failedAzs, opts.failedRegions);
   const app = (target.config as ConfigOf<'asg'> | ConfigOf<'ec2'>).app;
   if (!targets.length) {
     hops.push({ at: { kind: 'component', id: target.id }, check: 'lb-target-health', result: 'deny', explain: `${target.name} has no running instances in a working AZ. The target group has 0 healthy targets, so the ALB returns HTTP 503.` });
@@ -426,14 +744,10 @@ function albToTargets(board: Board, alb: Component, nodes: Eni[], p: Protocol, o
 
 // ---------- Latency ----------
 
-/** Approximate round-trip time from a city to us-east-1 and to the nearest CloudFront edge. */
-export const CITY_RTT: Record<string, { region: number; edge: number; label: string }> = {
-  virginia: { region: 8, edge: 6, label: 'Virginia' },
-  london: { region: 76, edge: 8, label: 'London' },
-  saopaulo: { region: 120, edge: 10, label: 'São Paulo' },
-  tokyo: { region: 160, edge: 8, label: 'Tokyo' },
-  sydney: { region: 200, edge: 10, label: 'Sydney' },
-};
+/** Approximate round-trip time from a city to us-east-1 and to the nearest CloudFront edge (see geo.ts for every Region). */
+export const CITY_RTT: Record<string, { region: number; edge: number; label: string }> = Object.fromEntries(
+  Object.entries(CITIES).map(([k, c]) => [k, { region: c.rtt['us-east-1'], edge: c.edge, label: c.label }]),
+);
 
 // ---------- Public entry ----------
 
@@ -441,6 +755,7 @@ function serviceEndpoint(board: Board, to: Endpoint): External | null {
   if (to === 'internet') return { kind: 'external', ip: INTERNET_IP, label: `an internet host (${INTERNET_IP})` };
   if (to === 'svc:s3') return { kind: 'external', ip: SERVICE_IPS.s3, label: 'Amazon S3', service: 's3' };
   if (to === 'svc:dynamodb') return { kind: 'external', ip: SERVICE_IPS.dynamodb, label: 'Amazon DynamoDB', service: 'dynamodb' };
+  if (to === 'onprem') return board.onprem ? { kind: 'external', ip: onpremIp(board), label: `the on-premises host ${onpremIp(board)}`, onprem: true } : null;
   const c = board.components[to];
   if (c?.type === 's3') return { kind: 'external', ip: SERVICE_IPS.s3, label: `S3 bucket ${c.name}`, service: 's3' };
   if (c?.type === 'dynamodb') return { kind: 'external', ip: SERVICE_IPS.dynamodb, label: `DynamoDB table ${c.name}`, service: 'dynamodb' };
@@ -454,8 +769,9 @@ function dropped(hops: Hop[], returnHops: Hop[] = [], via: PathVia = 'none'): Tr
 
 export function traceFlow(board: Board, flow: Flow, opts: TraceOptions = {}): Trace {
   const failed = opts.failedAzs ?? [];
+  const failedRegions = opts.failedRegions ?? [];
   const p = flow.protocol;
-  const city = CITY_RTT[flow.clientCity ?? 'virginia'] ?? CITY_RTT.virginia;
+  const city = flow.clientCity ?? 'virginia';
 
   // ----- From the internet -----
   if (flow.from === 'internet') {
@@ -464,8 +780,16 @@ export function traceFlow(board: Board, flow: Flow, opts: TraceOptions = {}): Tr
     return traceFromInternet(board, dst, p, flow.port, city, opts, []);
   }
 
+  // ----- From the data centre -----
+  if (flow.from === 'onprem') {
+    const dst = board.components[flow.to];
+    if (!dst) return dropped([{ at: { kind: 'onprem', id: 'onprem' }, check: 'exists', result: 'deny', explain: `The destination isn't on the board.` }]);
+    return traceFromOnprem(board, dst, p, flow.port, opts);
+  }
+
   const src = board.components[flow.from];
   if (!src) return dropped([{ at: { kind: 'internet', id: 'internet' }, check: 'exists', result: 'deny', explain: `The source isn't on the board.` }]);
+  if (failedRegions.includes(regionOf(board, src))) return dropped([{ at: { kind: 'component', id: src.id }, check: 'region', result: 'deny', explain: `${src.name} is in ${regionName(regionOf(board, src))}, which is down.` }]);
 
   // Regional serverless services (non-VPC Lambda, API Gateway) run in AWS-managed networks.
   if (src.placement.kind !== 'subnet') {
@@ -477,7 +801,7 @@ export function traceFlow(board: Board, flow: Flow, opts: TraceOptions = {}): Tr
     };
   }
 
-  const srcEnis = enisOf(board, src, failed);
+  const srcEnis = enisOf(board, src, failed, failedRegions);
   if (!srcEnis.length) {
     return dropped([{ at: { kind: 'component', id: src.id }, check: 'az', result: 'deny', explain: `${src.name} has no running interface in a working Availability Zone.` }]);
   }
@@ -492,11 +816,12 @@ export function traceFlow(board: Board, flow: Flow, opts: TraceOptions = {}): Tr
     let t: Trace;
     if (external) {
       const l = leg(board, s, external, p, flow.port, opts);
-      t = { result: l.ok ? 'delivered' : 'dropped', hops: l.hops, returnHops: l.returnHops, via: l.via };
+      t = { result: l.ok ? 'delivered' : 'dropped', hops: l.hops, returnHops: l.returnHops, via: l.via, linkId: l.linkId };
     } else {
-      const dEnis = enisOf(board, dstComp!, failed).sort((a, b) => (a.azId === s.azId ? -1 : 0) - (b.azId === s.azId ? -1 : 0));
+      const dEnis = enisOf(board, dstComp!, failed, failedRegions).sort((a, b) => (a.azId === s.azId ? -1 : 0) - (b.azId === s.azId ? -1 : 0));
       if (!dEnis.length) {
-        t = dropped([{ at: { kind: 'component', id: dstComp!.id }, check: 'az', result: 'deny', explain: `${dstComp!.name} has no running interface in a working Availability Zone.` }]);
+        const down = failedRegions.includes(regionOf(board, dstComp!));
+        t = dropped([{ at: { kind: 'component', id: dstComp!.id }, check: down ? 'region' : 'az', result: 'deny', explain: down ? `${dstComp!.name}'s Region is down.` : `${dstComp!.name} has no running interface in a working Availability Zone.` }]);
       } else {
         t = dropped([]);
         for (const d of dEnis) {
@@ -504,7 +829,7 @@ export function traceFlow(board: Board, flow: Flow, opts: TraceOptions = {}): Tr
           let cand: Trace = { result: l.ok ? 'delivered' : 'dropped', hops: l.hops, returnHops: l.returnHops, via: l.via };
           if (l.ok && dstComp!.type === 'alb') {
             const second = albToTargets(board, dstComp!, [d], p, opts);
-            cand = { result: second.ok ? 'delivered' : 'dropped', hops: [...l.hops, ...second.hops], returnHops: [...second.returnHops, ...l.returnHops], via: 'local' };
+            cand = { result: second.ok ? 'delivered' : 'dropped', hops: [...l.hops, ...second.hops], returnHops: [...second.returnHops, ...l.returnHops], via: l.via === 'local' ? 'local' : l.via };
           }
           if (cand.result === 'delivered') {
             t = cand;
@@ -521,24 +846,38 @@ export function traceFlow(board: Board, flow: Flow, opts: TraceOptions = {}): Tr
   return { ...rep!, result: all ? 'delivered' : 'dropped', paths };
 }
 
-function traceFromInternet(board: Board, dst: Component, p: Protocol, port: number, city: { region: number; edge: number; label: string }, opts: TraceOptions, prefix: Hop[]): Trace {
+function traceFromInternet(board: Board, dst: Component, p: Protocol, port: number, cityKey: string, opts: TraceOptions, prefix: Hop[]): Trace {
   const failed = opts.failedAzs ?? [];
+  const failedRegions = opts.failedRegions ?? [];
   const hops = [...prefix];
   const cfg = dst.config;
+  const cityInfo = CITIES[cityKey] ?? CITIES.virginia;
+  const city = { region: cityRtt(cityKey, regionOf(board, dst)), edge: cityInfo.edge, label: cityInfo.label };
 
   if (cfg.type === 'route53') {
-    const target = cfg.aliasTargetId ? board.components[cfg.aliasTargetId] : undefined;
-    if (!target) return dropped([...hops, { at: { kind: 'component', id: dst.id }, check: 'dns', result: 'deny', explain: `${cfg.recordName}: the record has no alias target, so DNS returns NXDOMAIN.` }]);
-    hops.push({ at: { kind: 'component', id: dst.id }, check: 'dns', result: 'allow', explain: `Route 53 answers ${cfg.recordName} with an alias to ${target.name}. Alias records to AWS resources are free to query and follow IP changes automatically.` });
-    return traceFromInternet(board, target, p, port, city, opts, hops);
+    if ((cfg.policy ?? 'simple') === 'simple') {
+      const target = cfg.aliasTargetId ? board.components[cfg.aliasTargetId] : undefined;
+      if (!target) return dropped([...hops, { at: { kind: 'component', id: dst.id }, check: 'dns', result: 'deny', explain: `${cfg.recordName}: the record has no alias target, so DNS returns NXDOMAIN.` }]);
+      hops.push({ at: { kind: 'component', id: dst.id }, check: 'dns', result: 'allow', explain: `Route 53 answers ${cfg.recordName} with an alias to ${target.name}. Alias records to AWS resources are free to query and follow IP changes automatically.` });
+      return traceFromInternet(board, target, p, port, cityKey, opts, hops);
+    }
+    const ans = resolveDns(board, cfg, cityKey, failedRegions);
+    const target = ans.targetId ? board.components[ans.targetId] : undefined;
+    if (!target) return dropped([...hops, { at: { kind: 'component', id: dst.id }, check: 'dns', result: 'deny', matched: { objectId: dst.id, ruleRef: 'records' }, explain: ans.explain }]);
+    hops.push({ at: { kind: 'component', id: dst.id }, check: 'dns', result: 'allow', matched: { objectId: dst.id, ruleRef: 'records' }, explain: ans.explain });
+    return traceFromInternet(board, target, p, port, cityKey, opts, hops);
   }
+
+  const dstRegion = regionOf(board, dst);
+  if (failedRegions.includes(dstRegion)) return dropped([...hops, { at: { kind: 'component', id: dst.id }, check: 'region', result: 'deny', explain: `${dst.name} is in ${regionName(dstRegion)}, which is down. Requests time out.` }]);
 
   if (cfg.type === 'cloudfront') {
     if (port === 80 && cfg.viewerProtocol === 'https-only') return dropped([...hops, { at: { kind: 'component', id: dst.id }, check: 'edge', result: 'deny', explain: `${dst.name} only accepts HTTPS.` }]);
     hops.push({ at: { kind: 'component', id: dst.id }, check: 'edge', result: 'allow', explain: `The viewer in ${city.label} connects to the nearest CloudFront edge location (~${city.edge} ms RTT). TLS terminates at the edge.` });
     const origin = cfg.originId ? board.components[cfg.originId] : undefined;
     if (!origin) return dropped([...hops, { at: { kind: 'component', id: dst.id }, check: 'origin', result: 'deny', explain: `${dst.name} has no origin configured. Every cache miss returns HTTP 502.` }]);
-    const missRtt = city.region; // edge -> origin over the AWS backbone, roughly the same distance
+    const origin0 = cfg.originId ? board.components[cfg.originId] : undefined;
+    const missRtt = origin0 ? cityRtt(cityKey, regionOf(board, origin0)) : city.region; // edge -> origin over the AWS backbone, roughly the same distance
     const latency = Math.round(city.edge + (1 - cfg.cacheHitRatio) * missRtt);
     if (origin.config.type === 's3') {
       const o = origin.config;
@@ -562,7 +901,7 @@ function traceFromInternet(board: Board, dst: Component, p: Protocol, port: numb
     }
     if (origin.type === 'alb') {
       hops.push({ at: { kind: 'component', id: dst.id }, check: 'origin', result: 'info', explain: `Cache misses go to ${origin.name} over the internet.` });
-      const t = traceFromInternet(board, origin, p, 443, city, opts, hops);
+      const t = traceFromInternet(board, origin, p, 443, cityKey, opts, hops);
       return { ...t, latencyMs: latency };
     }
     return dropped([...hops, { at: { kind: 'component', id: dst.id }, check: 'origin', result: 'deny', explain: `${origin.name} can't be a CloudFront origin here.` }]);
@@ -572,7 +911,7 @@ function traceFromInternet(board: Board, dst: Component, p: Protocol, port: numb
     const latency = city.region;
     if (cfg.blockPublicAccess) return dropped([...hops, { at: { kind: 'component', id: dst.id }, check: 'origin', result: 'deny', matched: { objectId: dst.id, ruleRef: 'Block Public Access' }, explain: `403 AccessDenied: Block Public Access is on for ${dst.name}, so anonymous requests are refused whatever the policy says.` }]);
     if (cfg.policy !== 'public-read') return dropped([...hops, { at: { kind: 'component', id: dst.id }, check: 'origin', result: 'deny', matched: { objectId: dst.id, ruleRef: 'bucket policy' }, explain: `403 AccessDenied: no bucket policy grants anonymous s3:GetObject on ${dst.name}.` }]);
-    hops.push({ at: { kind: 'component', id: dst.id }, check: 'origin', result: 'allow', explain: `${dst.name} is publicly readable. Every request travels to us-east-1 (~${latency} ms RTT from ${city.label}).` });
+    hops.push({ at: { kind: 'component', id: dst.id }, check: 'origin', result: 'allow', explain: `${dst.name} is publicly readable. Every request travels to ${dstRegion} (~${latency} ms RTT from ${city.label}).` });
     return { result: 'delivered', hops, returnHops: [], via: 'igw', latencyMs: latency };
   }
 
@@ -583,7 +922,7 @@ function traceFromInternet(board: Board, dst: Component, p: Protocol, port: numb
 
   if (dst.placement.kind !== 'subnet') return dropped([...hops, { at: { kind: 'component', id: dst.id }, check: 'exists', result: 'deny', explain: `${dst.name} does not accept connections from the internet.` }]);
 
-  const enis = enisOf(board, dst, failed);
+  const enis = enisOf(board, dst, failed, failedRegions);
   if (!enis.length) return dropped([...hops, { at: { kind: 'component', id: dst.id }, check: 'az', result: 'deny', explain: `${dst.name} has no running interface in a working Availability Zone.` }]);
 
   if (cfg.type === 'alb') {

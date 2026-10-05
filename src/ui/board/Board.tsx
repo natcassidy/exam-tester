@@ -1,7 +1,7 @@
 import { useDndContext, useDroppable } from '@dnd-kit/core';
 import type { ReactNode } from 'react';
-import type { Board as BoardT, Component, Placement, ServiceType, Subnet, Vpc } from '../../engine/model';
-import { subnetsOf, validatePlacement } from '../../engine/board';
+import type { Board as BoardT, Component, Placement, Region, ServiceType, Subnet, Vpc } from '../../engine/model';
+import { accountOf, subnetsOf, validatePlacement } from '../../engine/board';
 import { subnetPublicStatus } from '../../engine/net/routing';
 import { SERVICES } from '../../content/services';
 import { useGame } from '../../store/game';
@@ -116,21 +116,30 @@ function VpcView({ board, vpc }: { board: BoardT; vpc: Vpc }) {
   for (const az of vpc.azs) for (const s of az.subnets) if (!tiers.includes(s.tier)) tiers.push(s.tier);
   const cols = `repeat(${nAz}, minmax(0, 1fr))`;
   const attachments = vpc.attachments.map((id) => board.components[id]).filter(Boolean);
+  // Peering connections live in the requester VPC; show them on the accepter side too.
+  const peeredIn = Object.values(board.components).filter((c) => c.config.type === 'pcx' && c.config.peerVpcId === vpc.id);
+  const multiAccount = new Set(board.regions.flatMap((r) => r.vpcs).map((v) => accountOf(board, v))).size > 1;
   return (
     <div className="vpc">
       <div className="zone-head">
-        <h4>VPC</h4>
+        <h4>{vpc.name ? `VPC ${vpc.name}` : 'VPC'}</h4>
         <span className="mono">
           {vpc.id} · {vpc.cidr}
+          {multiAccount ? ` · account ${accountOf(board, vpc)}` : ''}
         </span>
       </div>
-      <Zone zone={{ kind: 'vpcAttach', refId: vpc.id }} className="zone" label="VPC attachments">
+      <Zone zone={{ kind: 'vpcAttach', refId: vpc.id }} className="zone" label={`Attachments of ${vpc.name ?? vpc.id}`}>
         <div className="zone-head">
           <h4>Attachments</h4>
-          <span className="hint">internet gateway, gateway endpoints</span>
+          <span className="hint">internet gateway, endpoints, VPN gateway, peering</span>
         </div>
         <div className="strip">
-          {attachments.length ? attachments.map((c) => <Node key={c.id} c={c} />) : <span className="empty-note">Nothing attached</span>}
+          {attachments.length ? attachments.map((c) => <Node key={c.id} c={c} />) : !peeredIn.length && <span className="empty-note">Nothing attached</span>}
+          {peeredIn.map((c) => (
+            <span key={c.id} className="ghost-node" title="Peering connections are created in the requester VPC and accepted here">
+              ⇄ {c.name} (accepter)
+            </span>
+          ))}
         </div>
       </Zone>
       <div className="az-head" style={{ gridTemplateColumns: cols, display: 'grid', marginTop: 10 }}>
@@ -185,14 +194,57 @@ function VpcView({ board, vpc }: { board: BoardT; vpc: Vpc }) {
   );
 }
 
+function RegionView({ board, region, first }: { board: BoardT; region: Region; first: boolean }) {
+  const { readOnly } = useBoardView();
+  const regional = region.regionalServices.map((id) => board.components[id]).filter(Boolean);
+  return (
+    <div className="zone region-zone" style={{ borderStyle: 'solid' }}>
+      <div className="zone-head">
+        <h4>Region</h4>
+        <span className="mono">
+          {region.id} · {region.name}
+        </span>
+      </div>
+      <Zone zone={{ kind: 'region', refId: region.id }} className="zone" label={`Regional services in ${region.id}`}>
+        <div className="zone-head" data-node-id={readOnly || !first ? undefined : 'svc'}>
+          <h4>Regional services</h4>
+          <span className="hint">S3 · SQS · Lambda · API Gateway · DynamoDB · Kinesis · Transit Gateway · Backup</span>
+        </div>
+        <div className="strip">{regional.length ? regional.map((c) => <Node key={c.id} c={c} />) : <span className="empty-note">Drop regional services here</span>}</div>
+      </Zone>
+      {region.vpcs.map((v) => (
+        <div key={v.id} style={{ marginTop: 10 }}>
+          <VpcView board={board} vpc={v} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function OnPremView({ board }: { board: BoardT }) {
+  const { readOnly } = useBoardView();
+  const op = board.onprem!;
+  const comps = op.components.map((id) => board.components[id]).filter(Boolean);
+  return (
+    <Zone zone={{ kind: 'onprem', refId: 'onprem' }} className="zone onprem-zone" label="On-premises data centre">
+      <div className="zone-head" data-node-id={readOnly ? undefined : 'onprem'}>
+        <h4>On-premises · {op.name}</h4>
+        <span className="mono">
+          {op.cidr} · {op.internetMbps.toLocaleString()} Mbps internet
+        </span>
+      </div>
+      <div className="hint" style={{ fontSize: 11 }}>Customer gateway · Site-to-Site VPN · Direct Connect · Snowball · DataSync</div>
+      <div className="strip">{comps.length ? comps.map((c) => <Node key={c.id} c={c} />) : <span className="empty-note">Drop hybrid services here</span>}</div>
+    </Zone>
+  );
+}
+
 export function Board() {
   const { board, select, readOnly } = useBoardView();
   const placing0 = useGame((s) => s.placing);
   const placing = readOnly ? null : placing0;
   const setPlacing = useGame((s) => s.setPlacing);
-  const region = board.regions[0];
   const edge = board.edge.map((id) => board.components[id]).filter(Boolean);
-  const regional = region.regionalServices.map((id) => board.components[id]).filter(Boolean);
   return (
     <div className={`board ${placing ? 'placing-mode' : ''} ${readOnly ? 'read-only' : ''}`} onClick={() => !placing && select(null)}>
       {placing && (
@@ -215,26 +267,10 @@ export function Board() {
         </div>
         <div className="strip">{edge.length ? edge.map((c) => <Node key={c.id} c={c} />) : <span className="empty-note">Drop global services here</span>}</div>
       </Zone>
-      <div className="zone" style={{ borderStyle: 'solid' }}>
-        <div className="zone-head">
-          <h4>Region</h4>
-          <span className="mono">
-            {region.id} · {region.name}
-          </span>
-        </div>
-        <Zone zone={{ kind: 'region', refId: region.id }} className="zone" label="Regional services">
-          <div className="zone-head" data-node-id={readOnly ? undefined : 'svc'}>
-            <h4>Regional services</h4>
-            <span className="hint">S3 · SQS · Lambda · API Gateway · DynamoDB</span>
-          </div>
-          <div className="strip">{regional.length ? regional.map((c) => <Node key={c.id} c={c} />) : <span className="empty-note">Drop regional services here</span>}</div>
-        </Zone>
-        {region.vpcs.map((v) => (
-          <div key={v.id} style={{ marginTop: 10 }}>
-            <VpcView board={board} vpc={v} />
-          </div>
-        ))}
-      </div>
+      {board.regions.map((r, i) => (
+        <RegionView key={r.id} board={board} region={r} first={i === 0} />
+      ))}
+      {board.onprem && <OnPremView board={board} />}
       {!readOnly && <TraceOverlay />}
     </div>
   );

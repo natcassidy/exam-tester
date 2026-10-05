@@ -77,7 +77,8 @@ export function computeAzOutage(board: Board, p: AzOutageParams): AzOutageOutcom
   }
 
   // Database tier.
-  for (const db of componentsOfType(board, 'rds')) {
+  // Read replicas and global secondaries don't take writes: losing one doesn't take the application down.
+  for (const db of componentsOfType(board, 'rds').filter((d) => !d.config.replicaOf)) {
     const cfg = db.config;
     const primaryAz = azOf(subnetsOf(db)[0]);
     if (primaryAz !== p.az) {
@@ -99,6 +100,18 @@ export function computeAzOutage(board: Board, p: AzOutageParams): AzOutageOutcom
     } else {
       tiers.push({ tier: 'Database', componentId: db.id, rtoSec: Infinity, rpoSec: Infinity, status: 'fail', explain: `Single-AZ with backup retention 0: there are no automated backups. Total data loss.` });
     }
+  }
+
+  for (const db of componentsOfType(board, 'aurora').filter((d) => !d.config.globalPrimaryId)) {
+    const primaryAz = azOf(subnetsOf(db)[0]);
+    if (primaryAz !== p.az) {
+      tiers.push({ tier: 'Database', componentId: db.id, rtoSec: 0, rpoSec: 0, status: 'pass', explain: `${db.name}'s writer is in ${primaryAz}, which survives.` });
+      continue;
+    }
+    if (db.config.readers > 0)
+      tiers.push({ tier: 'Database', componentId: db.id, rtoSec: 30, rpoSec: 0, status: 'pass', explain: `Aurora promotes a reader in another AZ to writer, typically in about 30 seconds. RPO is 0: the cluster volume keeps six copies across three AZs.` });
+    else
+      tiers.push({ tier: 'Database', componentId: db.id, rtoSec: 600, rpoSec: 0, status: 'warn', explain: `No Aurora Replica to promote, so Aurora creates a new writer instance in another AZ (up to ~10 minutes). No data is lost: storage is replicated six ways across three AZs.` });
   }
 
   // NAT dependency.
@@ -123,7 +136,7 @@ export function computeAzOutage(board: Board, p: AzOutageParams): AzOutageOutcom
   }
 
   // Regional services are unaffected by a single AZ.
-  const regional = Object.values(board.components).filter((c) => ['s3', 'sqs', 'lambda', 'apigw', 'dynamodb'].includes(c.type));
+  const regional = Object.values(board.components).filter((c) => ['s3', 'sqs', 'lambda', 'apigw', 'dynamodb', 'kinesis', 'firehose', 'athena', 'backup', 'tgw'].includes(c.type));
   if (regional.length) tiers.push({ tier: 'Regional services', rtoSec: 0, rpoSec: 0, status: 'info', explain: `${regional.map((c) => c.name).join(', ')} are regional services that span AZs automatically.` });
 
   const rtoSec = tiers.reduce((m, t) => Math.max(m, t.rtoSec), 0);

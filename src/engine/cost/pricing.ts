@@ -51,7 +51,54 @@ export const PRICING = {
   wafPerMillion: 0.6,
   route53HostedZoneMonthly: 0.5,
   route53PerMillionQueries: 0.4,
+  // ----- Stage 3 -----
+  route53LatencyPerMillionQueries: 0.6,
+  route53HealthCheckMonthly: 0.5,
+  route53FastIntervalMonthly: 1,
+  interRegionPerGb: 0.02,
+  tgwAttachmentHourly: 0.05,
+  tgwPerGb: 0.02,
+  vpnConnectionHourly: 0.05,
+  dxPortHourly: { 1: 0.3, 10: 2.25, 100: 22.5 } as Record<1 | 10 | 100, number>,
+  dxOutPerGb: 0.02,
+  auroraHourly: { 'db.r6g.large': 0.26, 'db.r6g.xlarge': 0.519, 'db.r6g.2xlarge': 1.038 } as Record<string, number>,
+  auroraAcuHourly: 0.12,
+  auroraStorageGbMonth: 0.1,
+  auroraReplicatedWritePerMillion: 0.2,
+  dynamoReplicatedWritePerMillion: 0.625,
+  daxNodeHourly: 0.08,
+  backupGbMonth: 0.05,
+  kinesisShardHourly: 0.015,
+  kinesisPutUnitsPerMillion: 0.014,
+  kinesisEfoShardHourly: 0.015,
+  kinesisEfoPerGb: 0.013,
+  kinesisOnDemandStreamHourly: 0.04,
+  kinesisOnDemandInPerGb: 0.08,
+  kinesisOnDemandOutPerGb: 0.04,
+  firehosePerGb: 0.029,
+  firehoseFormatConversionPerGb: 0.018,
+  athenaPerTb: 5,
+  snowballJob: 300,
+  datasyncPerGb: 0.0125,
+  dmsInstanceHourly: 0.073,
 } as const;
+
+/** S3 storage classes (approximate us-east-1): storage per GB-month, retrieval per GB, minimum storage days, first-byte latency, lifecycle transition cost per 1,000 objects. */
+export const S3_CLASSES: Record<
+  'STANDARD' | 'INTELLIGENT_TIERING' | 'STANDARD_IA' | 'ONEZONE_IA' | 'GLACIER_IR' | 'GLACIER' | 'DEEP_ARCHIVE',
+  { label: string; gbMonth: number; retrievalPerGb: number; minDays: number; firstByteSec: number; firstByte: string; transitionPer1k: number; azs: number }
+> = {
+  STANDARD: { label: 'S3 Standard', gbMonth: 0.023, retrievalPerGb: 0, minDays: 0, firstByteSec: 0.1, firstByte: 'milliseconds', transitionPer1k: 0, azs: 3 },
+  INTELLIGENT_TIERING: { label: 'S3 Intelligent-Tiering', gbMonth: 0.023, retrievalPerGb: 0, minDays: 0, firstByteSec: 0.1, firstByte: 'milliseconds (default tiers)', transitionPer1k: 0.01, azs: 3 },
+  STANDARD_IA: { label: 'S3 Standard-IA', gbMonth: 0.0125, retrievalPerGb: 0.01, minDays: 30, firstByteSec: 0.1, firstByte: 'milliseconds', transitionPer1k: 0.01, azs: 3 },
+  ONEZONE_IA: { label: 'S3 One Zone-IA', gbMonth: 0.01, retrievalPerGb: 0.01, minDays: 30, firstByteSec: 0.1, firstByte: 'milliseconds', transitionPer1k: 0.01, azs: 1 },
+  GLACIER_IR: { label: 'S3 Glacier Instant Retrieval', gbMonth: 0.004, retrievalPerGb: 0.03, minDays: 90, firstByteSec: 0.1, firstByte: 'milliseconds', transitionPer1k: 0.02, azs: 3 },
+  GLACIER: { label: 'S3 Glacier Flexible Retrieval', gbMonth: 0.0036, retrievalPerGb: 0.01, minDays: 90, firstByteSec: 5 * 3600, firstByte: '3-5 hours (standard), 1-5 minutes (expedited)', transitionPer1k: 0.03, azs: 3 },
+  DEEP_ARCHIVE: { label: 'S3 Glacier Deep Archive', gbMonth: 0.00099, retrievalPerGb: 0.02, minDays: 180, firstByteSec: 12 * 3600, firstByte: 'within 12 hours (standard), 48 hours (bulk)', transitionPer1k: 0.05, azs: 3 },
+};
+
+/** Intelligent-Tiering: objects not accessed for 30 days move to Infrequent Access, after 90 days to Archive Instant Access. */
+export const S3_INTELLIGENT = { infrequentGbMonth: 0.0125, archiveInstantGbMonth: 0.004, monitoringPer1kObjects: 0.0025 };
 
 /** Requests per second an instance serves at 70% CPU in the capacity model. */
 export const INSTANCE_RPS_AT_70: Record<InstanceType, number> = {

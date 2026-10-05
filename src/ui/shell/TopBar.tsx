@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { Fragment, useRef } from 'react';
 import { ALL_MISSIONS } from '../../content/missions';
 import { Mode, modeOf, useGame } from '../../store/game';
 
@@ -57,11 +57,18 @@ export function TopBar() {
       </div>
       <nav className="chips" aria-label="Missions">
         {missions.map((m, i) => (
-          <button key={m.id} className={`chip ${m.id === current ? 'active' : ''}`} onClick={() => setMission(m.id)} aria-current={m.id === current}>
-            <span className="n">{String(i + 1).padStart(2, '0')}</span>
-            {m.title}
-            <Stars n={best[m.id]?.stars ?? 0} />
-          </button>
+          <Fragment key={m.id}>
+            {i > 0 && m.stage !== missions[i - 1].stage && (
+              <span className="chip-divider" aria-hidden>
+                {m.stage === 3 ? 'Breadth' : `Stage ${m.stage}`}
+              </span>
+            )}
+            <button className={`chip ${m.id === current ? 'active' : ''}`} onClick={() => setMission(m.id)} aria-current={m.id === current} title={m.stage === 3 ? 'Stage 3: breadth (multi-Region, hybrid, storage, data)' : undefined}>
+              <span className="n">{String(i + 1).padStart(2, '0')}</span>
+              {m.title}
+              <Stars n={best[m.id]?.stars ?? 0} />
+            </button>
+          </Fragment>
         ))}
       </nav>
       <div className="top-actions">

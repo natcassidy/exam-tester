@@ -27,6 +27,8 @@
   --c-integration: #f472b6;
   --c-security: #ff6b6b;
   --c-edge: #22d3ee;
+  --c-analytics: #facc15;
+  --c-hybrid: #94a3b8;
 
   --font-display: 'Bricolage Grotesque', system-ui, sans-serif;
   --font-body: 'Instrument Sans', system-ui, sans-serif;
@@ -135,6 +137,8 @@ label.field.stack { grid-template-columns: 1fr; }
 .abbr.integration { background: var(--c-integration); }
 .abbr.security { background: var(--c-security); }
 .abbr.edge { background: var(--c-edge); }
+.abbr.analytics { background: var(--c-analytics); }
+.abbr.hybrid { background: var(--c-hybrid); }
 
 /* ---------- Board ---------- */
 .board { position: relative; padding: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 640px; }
@@ -416,3 +420,16 @@ table.rules tr.implicit td { color: var(--faint); }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* ----- Stage 3: Regions, on-premises, peering, TGW tables ----- */
+.region-zone + .region-zone { margin-top: 12px; }
+.onprem-zone { margin-top: 12px; border-style: solid; border-color: var(--c-hybrid); background: rgba(148, 163, 184, 0.06); }
+.ghost-node {
+  display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border: 1px dashed var(--line-2);
+  border-radius: var(--r); color: var(--muted); font-size: 12px;
+}
+.mini-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+.mini-table th, .mini-table td { text-align: left; padding: 3px 4px; border-bottom: 1px solid var(--line); }
+.mini-table th { color: var(--muted); font-weight: 600; }
+.mini-table td:not(:first-child), .mini-table th:not(:first-child) { text-align: center; width: 52px; }
+.chip-divider { align-self: center; flex: none; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--faint); padding: 0 4px 0 10px; border-left: 1px solid var(--line-2); }
