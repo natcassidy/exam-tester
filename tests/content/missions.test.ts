@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ALL_MISSIONS, MISSIONS } from '../../src/content/missions';
+import { ALL_MISSIONS, DIFFS, MISSIONS } from '../../src/content/missions';
 import { QUESTION_BY_ID, QUESTIONS } from '../../src/content/questions';
 import { TASKS } from '../../src/content/concepts';
 import { DOMAIN_ORDER, DOMAIN_WEIGHTS } from '../../src/engine/mastery/exam';
@@ -74,6 +74,27 @@ describe('question bank', () => {
 
   it('every concept has at least one question (so "Practice this" always works)', () => {
     for (const c of Object.values(CONCEPT_BY_ID)) expect(QUESTIONS.some((q) => q.concepts.includes(c.id)), c.id).toBe(true);
+  });
+
+  it("doesn't give the answer away by length", () => {
+    // The answer used to be the longest option in 3 of 4 questions; picking the longest scored ~75%.
+    const len = (q: (typeof QUESTIONS)[number], ids: string[]) => q.options.filter((o) => ids.includes(o.id)).map((o) => o.text.length);
+    const single = QUESTIONS.filter((q) => q.correct.length === 1);
+    for (const q of single) {
+      const wrong = q.options.filter((o) => !q.correct.includes(o.id)).map((o) => o.id);
+      expect(len(q, q.correct)[0] / Math.max(...len(q, wrong)), `${q.id}: answer much longer than every distractor`).toBeLessThanOrEqual(1.2);
+    }
+    const longest = single.filter((q) => len(q, q.correct)[0] > Math.max(...len(q, q.options.map((o) => o.id).filter((id) => !q.correct.includes(id)))));
+    expect(longest.length / single.length, 'share of questions whose answer is the longest option').toBeLessThanOrEqual(0.35);
+    for (const q of QUESTIONS.filter((x) => x.correct.length > 1)) {
+      const top = [...q.options].sort((a, b) => b.text.length - a.text.length).slice(0, q.correct.length);
+      expect(top.every((o) => q.correct.includes(o.id)), `${q.id}: the answers are exactly the longest options`).toBe(false);
+    }
+    for (const m of DIFFS) {
+      const d = m.diff!;
+      const answer = d.options.find((o) => o.id === d.correct)!.text.length;
+      expect(answer / Math.max(...d.options.filter((o) => o.id !== d.correct).map((o) => o.text.length)), m.id).toBeLessThanOrEqual(1.2);
+    }
   });
 
   it('multi-answer questions say how many to choose', () => {
