@@ -37,6 +37,10 @@ export function Tutorial() {
   const tutorial = useGame((s) => s.tutorial);
   const setTutorial = useGame((s) => s.setTutorial);
   const onFirst = useGame((s) => s.currentMissionId === MISSIONS[0].id);
+  // Shrink the card to one line while the player is placing (so it doesn't hide the drop zones)
+  // or reading results (it sits just above the drawer).
+  const compact = useGame((s) => !!s.placing || (s.simOpen && !!s.results[s.currentMissionId]));
+  const aboveDrawer = useGame((s) => s.simOpen && !!s.results[s.currentMissionId]);
   const stepDone = useGame((s) => !s.tutorial.done && s.tutorial.step < STEPS.length && STEPS[s.tutorial.step].done(s));
 
   useEffect(() => {
@@ -47,9 +51,12 @@ export function Tutorial() {
   const finished = tutorial.step >= STEPS.length;
   const step = STEPS[Math.min(tutorial.step, STEPS.length - 1)];
   return (
-    <aside className="coach" role="region" aria-label="Getting started" aria-live="polite">
+    <aside className={`coach ${compact ? 'compact' : ''} ${aboveDrawer ? 'above-drawer' : ''}`} role="region" aria-label="Getting started" aria-live="polite">
       <div className="coach-head">
-        <span className="hint">{finished ? 'Done' : `Step ${tutorial.step + 1} of ${STEPS.length}`}</span>
+        <span className="hint">
+          {finished ? 'Done' : `Step ${tutorial.step + 1} of ${STEPS.length}`}
+          {compact && <b className="coach-title">{finished ? 'You have the loop' : step.title}</b>}
+        </span>
         <button className="btn ghost small" onClick={() => setTutorial(tutorial.step, true)} aria-label="Skip the tour">
           {finished ? 'Close' : 'Skip'}
         </button>
