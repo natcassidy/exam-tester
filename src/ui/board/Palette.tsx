@@ -7,7 +7,7 @@ import { Abbr } from '../shell/Abbr';
 const ALL: ServiceType[] = [
   'cloudfront', 'route53', 'waf', 'apigw', 'lambda', 'sqs', 'dynamodb', 's3', 'kinesis', 'firehose', 'athena', 'backup', 'tgw', 'dms',
   'alb', 'asg', 'ec2', 'rds', 'aurora', 'nat', 'igw', 'vpce', 'pcx', 'vgw',
-  'cgw', 'vpn', 'dx', 'snow', 'datasync',
+  'cgw', 'vpn', 'dx', 'snow', 'datasync', 'savings',
 ];
 
 function Item({ type }: { type: ServiceType }) {

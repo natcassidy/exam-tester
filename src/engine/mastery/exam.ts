@@ -63,6 +63,16 @@ export function drawExam(bank: Question[], seed: string, total = EXAM_QUESTIONS)
   return shuffle(picked, rand).map((q) => q.id);
 }
 
+/**
+ * Options in a stable per-question order. Many bank questions list the answer first, so every
+ * question surface shows a shuffled order and letters by position; answers keep the option ids.
+ */
+export function displayOptions(q: Question): Question['options'] {
+  return [...q.options].sort((a, b) => hashString(`${q.id}:${a.id}`) - hashString(`${q.id}:${b.id}`));
+}
+
+export const letter = (i: number) => String.fromCharCode(65 + i);
+
 export function isCorrect(q: Question, chosen: string[] | undefined): boolean {
   return !!chosen && chosen.length === q.correct.length && q.correct.every((c) => chosen.includes(c));
 }

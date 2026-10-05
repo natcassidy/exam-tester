@@ -14,6 +14,12 @@ import { Toasts } from './shell/Toasts';
 import { TopBar } from './shell/TopBar';
 import { useIsMobile } from './shell/useMedia';
 import { SimDrawer } from './sim/SimDrawer';
+import { ConceptMap } from './mastery/ConceptMap';
+import { DailySession } from './mastery/DailySession';
+import { DefendModal } from './mastery/Defend';
+import { ExamMode } from './mastery/ExamMode';
+import { Tutorial } from './shell/Tutorial';
+import { usePrefersReducedMotion } from './shell/useMedia';
 import { TracePanel } from './trace/TracePanel';
 
 function RightPanel() {
@@ -36,6 +42,11 @@ export function App() {
   const [dragType, setDragType] = useState<ServiceType | null>(null);
   const mission = useGame((s) => s.mission());
   const mode = modeOf(mission);
+  const reduceSetting = useGame((s) => s.settings.reducedMotion);
+  const prefersReduced = usePrefersReducedMotion();
+  useEffect(() => {
+    document.documentElement.classList.toggle('reduce-motion', reduceSetting || prefersReduced);
+  }, [reduceSetting, prefersReduced]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -48,9 +59,13 @@ export function App() {
       if (e.key !== 'Escape') return;
       const s = useGame.getState();
       if (s.manualOpen) return s.openManual(null);
+      if (s.defend) return s.openDefend(null);
+      if (s.questionsOpen) return s.openQuestions(false);
+      if (s.examOpen) return s.openExam(false);
+      if (s.dailyOpen) return s.openDaily(false);
+      if (s.mapOpen) return s.openMap(null);
       if (s.logsOpen) return s.openLogs(false);
       if (s.diagnoseOpen) return s.openDiagnose(false);
-      if (s.questionsOpen) return s.openQuestions(false);
       if (s.placing) return s.setPlacing(null);
       if (s.traceOpen) return s.openTrace(false);
       if (s.selection) return s.select(null);
@@ -115,10 +130,15 @@ export function App() {
         </>
       )}
       <DragOverlay dropAnimation={null}>{dragType ? <PaletteOverlayItem type={dragType} /> : null}</DragOverlay>
+      <ConceptMap />
+      <DailySession />
+      <ExamMode />
       <Questions />
+      <DefendModal />
       <LogsModal />
       <DiagnoseModal />
       <FieldManual />
+      {mode === 'build' && <Tutorial />}
       <Toasts />
     </DndContext>
   );

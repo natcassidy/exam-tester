@@ -6,6 +6,7 @@ import { bucketPolicyDoc } from '../../engine/iam/access';
 import { NumberField, SelectField, TextField, Toggle } from './fields';
 import { RefSelect, useUpdate } from './refs';
 import { Stage3Config, Stage3Extras } from './Stage3Config';
+import { PurchaseOptions, SavingsConfig } from './Stage4Config';
 
 export const INSTANCE_TYPES: InstanceType[] = ['t3.micro', 't3.small', 't3.medium', 't3.large', 'm5.large', 'm5a.large', 'm6i.large', 'c5.large', 'm5.xlarge'];
 const DB_CLASSES: DbInstanceClass[] = ['db.t3.micro', 'db.t3.medium', 'db.r5.large', 'db.r5.xlarge'];
@@ -111,8 +112,11 @@ export function ConfigPanel({ c }: { c: Component }) {
           <NumberField label="Health check grace" value={cfg.healthCheckGraceSec} min={0} max={7200} suffix="s" onChange={(v) => update({ healthCheckGraceSec: v })} />
           <Toggle label="Auto-assign public IPv4" value={cfg.publicIp} onChange={(v) => update({ publicIp: v })} />
           <TextField label="App health path" value={cfg.app.healthPath} onChange={(v) => update({ app: { ...cfg.app, healthPath: v } })} />
+          <PurchaseOptions c={c} />
         </>
       );
+    case 'savings':
+      return <SavingsConfig c={c} />;
     case 'rds':
       return (
         <>

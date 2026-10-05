@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { REFACTORS } from '../../src/content/missions';
 import { rightSizeDb, rightSizeDbAurora } from '../../src/content/missions/refactors';
 import { runMission } from '../../src/engine/sim/runner';
 import { scoreRefactor } from '../../src/engine/scoring';
@@ -7,7 +6,8 @@ import { SURPRISES } from '../../src/content/surprises';
 import { pickSurprise } from '../../src/engine/mastery/surprise';
 import { MISSIONS } from '../../src/content/missions';
 import { DEFENDS } from '../../src/content/defend';
-import { MISSION_BY_ID } from '../../src/content/missions';
+import { MISSION_BY_ID, REFACTORS } from '../../src/content/missions';
+import { paletteFor } from '../../src/ui/board/Palette';
 
 const summarize = (rs: ReturnType<typeof runMission>) => rs.map((r) => `${r.eventId}: ${r.status} — ${r.summary}`).join('\n');
 
@@ -86,6 +86,17 @@ describe('defend rounds', () => {
       expect(d.rubric.length, key).toBeGreaterThanOrEqual(3);
       expect(d.rubric.length, key).toBeLessThanOrEqual(4);
       expect(d.model.length, key).toBeGreaterThan(40);
+    }
+  });
+});
+
+
+describe('refactor palettes', () => {
+  it('offer every component type the reference adds to the production board', () => {
+    for (const m of REFACTORS) {
+      const types = new Set(paletteFor(m.palette));
+      const before = new Set(Object.values(m.startingBoard!.components).map((c) => c.type));
+      for (const c of Object.values(m.reference.components)) if (!before.has(c.type)) expect(types.has(c.type), `${m.id}: ${c.type}`).toBe(true);
     }
   });
 });

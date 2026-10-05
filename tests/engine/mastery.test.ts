@@ -7,6 +7,11 @@ import { domainCounts, drawExam, scaledScore, scoreExam } from '../../src/engine
 import { CONCEPTS } from '../../src/content/concepts';
 import { QUESTION_BY_ID, QUESTIONS } from '../../src/content/questions';
 import { DIFFS, INCIDENTS } from '../../src/content/missions';
+import { pickSurprise } from '../../src/engine/mastery/surprise';
+import { SURPRISES } from '../../src/content/surprises';
+import { MISSIONS } from '../../src/content/missions';
+import { runEvent } from '../../src/engine/sim/runner';
+import { displayOptions } from '../../src/engine/mastery/exam';
 
 const day = (n: number, h = 12) => new Date(Date.UTC(2026, 0, 1 + n, h)).toISOString();
 const ev = (correct: boolean, at: string, conceptId = 'nacls', source = `question:q-${at}`): Evidence => ({ conceptId, source, correct, weight: 1, at });
@@ -153,5 +158,41 @@ describe('exam mode', () => {
     const none = scoreExam(ids, QUESTION_BY_ID, {});
     expect(none.pass).toBe(false);
     expect(none.byDomain.secure.total).toBe(19);
+  });
+});
+
+describe('surprise events', () => {
+  const builds = MISSIONS.filter((m) => m.mode === 'build');
+  const allConcepts = CONCEPTS.map((c) => c.id);
+
+  it('never picks one when nothing is due', () => {
+    for (const m of builds) expect(pickSurprise(m, [], SURPRISES)).toBeNull();
+  });
+
+  it("only injects surprises the mission's reference passes, on concepts that are due", () => {
+    let injected = 0;
+    for (const m of builds) {
+      const ev = pickSurprise(m, allConcepts, SURPRISES);
+      if (!ev) continue;
+      injected++;
+      expect(ev.id.startsWith('surprise-'), m.id).toBe(true);
+      expect(runEvent(m.reference, ev, { budget: m.budget, usage: m.usage }).status, `${m.id} ${ev.id}`).toBe('pass');
+      const only = pickSurprise(m, [ev.concepts[0]], SURPRISES);
+      expect(only?.concepts).toContain(ev.concepts[0]);
+    }
+    expect(injected).toBeGreaterThanOrEqual(builds.length / 2);
+  });
+});
+
+describe('option order', () => {
+  it('is a stable permutation that does not always put the answer first', () => {
+    let first = 0;
+    for (const q of QUESTIONS) {
+      const shown = displayOptions(q);
+      expect(shown.map((o) => o.id).sort()).toEqual(q.options.map((o) => o.id).sort());
+      expect(displayOptions(q)).toEqual(shown);
+      if (q.correct.includes(shown[0].id)) first++;
+    }
+    expect(first / QUESTIONS.length).toBeLessThan(0.4);
   });
 });
