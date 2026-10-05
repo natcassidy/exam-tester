@@ -1,7 +1,8 @@
-import type { Component, ConfigOf, DbInstanceClass, InstanceType, ScalingPolicy, ServiceConfig, ServiceType } from '../../engine/model';
+import type { Component, DbInstanceClass, InstanceType, ScalingPolicy, ServiceConfig, ServiceType } from '../../engine/model';
 import { updateConfig, componentsOfType, vpcOfComponent } from '../../engine/board';
 import { HOURS_PER_MONTH, PRICING } from '../../engine/cost/pricing';
 import { useGame } from '../../store/game';
+import { bucketPolicyDoc } from '../../engine/iam/access';
 import { NumberField, SelectField, TextField, Toggle } from './fields';
 
 const INSTANCE_TYPES: InstanceType[] = ['t3.micro', 't3.small', 't3.medium', 't3.large', 'm5.large', 'c5.large', 'm5.xlarge'];
@@ -82,28 +83,9 @@ function PolicyEditor({ policy, onChange }: { policy: ScalingPolicy; onChange: (
   );
 }
 
-function BucketPolicyView({ c }: { c: Component & { config: ConfigOf<'s3'> } }) {
+function BucketPolicyView({ c }: { c: Component }) {
   const board = useGame((s) => s.board());
-  const cfg = c.config;
-  const dist = cfg.policyDistributionId ? board.components[cfg.policyDistributionId] : null;
-  const doc =
-    cfg.policy === 'none'
-      ? null
-      : cfg.policy === 'public-read'
-        ? { Version: '2012-10-17', Statement: [{ Sid: 'PublicRead', Effect: 'Allow', Principal: '*', Action: 's3:GetObject', Resource: `arn:aws:s3:::${c.name}/*` }] }
-        : {
-            Version: '2012-10-17',
-            Statement: [
-              {
-                Sid: 'AllowCloudFrontServicePrincipalReadOnly',
-                Effect: 'Allow',
-                Principal: { Service: 'cloudfront.amazonaws.com' },
-                Action: 's3:GetObject',
-                Resource: `arn:aws:s3:::${c.name}/*`,
-                Condition: { StringEquals: { 'AWS:SourceArn': `arn:aws:cloudfront::111122223333:distribution/${dist ? dist.name.toUpperCase() : '<choose a distribution>'}` } },
-              },
-            ],
-          };
+  const doc = bucketPolicyDoc(board, c);
   return <pre className="md" style={{ background: 'var(--bg-2)', padding: 8, borderRadius: 6, fontSize: 11, overflow: 'auto' }}>{doc ? JSON.stringify(doc, null, 2) : '// No bucket policy. Only principals with IAM permissions in this account can read.'}</pre>;
 }
 
@@ -182,12 +164,13 @@ export function ConfigPanel({ c }: { c: Component }) {
               { value: 'none', label: 'No policy' },
               { value: 'public-read', label: 'Public read (Principal: *)' },
               { value: 'cloudfront-oac', label: 'CloudFront OAC only' },
+              ...(cfg.policy === 'custom' ? [{ value: 'custom' as const, label: 'Custom (edited JSON)' }] : []),
             ]}
-            onChange={(v) => update({ policy: v, policyDistributionId: v === 'cloudfront-oac' ? (cfg.policyDistributionId ?? componentsOfType(board, 'cloudfront')[0]?.id ?? null) : null })}
-            hint="Read-only JSON below. Full policy editing arrives in Stage 2."
+            onChange={(v) => update({ policy: v, customPolicy: v === 'custom' ? cfg.customPolicy : null, policyDistributionId: v === 'cloudfront-oac' ? (cfg.policyDistributionId ?? componentsOfType(board, 'cloudfront')[0]?.id ?? null) : null })}
+            hint="Presets below. Edit the JSON on the Permissions tab."
           />
           {cfg.policy === 'cloudfront-oac' && <RefSelect label="Distribution (AWS:SourceArn)" value={cfg.policyDistributionId} types={['cloudfront']} onChange={(v) => update({ policyDistributionId: v })} />}
-          <BucketPolicyView c={c as Component & { config: ConfigOf<'s3'> }} />
+          <BucketPolicyView c={c} />
         </>
       );
     case 'sqs':

@@ -38,6 +38,13 @@ export function paletteFor(palette?: ServiceType[]): ServiceType[] {
 export function Palette({ tray = false }: { tray?: boolean }) {
   const mission = useGame((s) => s.mission());
   const types = paletteFor(mission.palette);
+  if (!types.length)
+    return tray ? null : (
+      <div className="palette" aria-label="Services">
+        <h3>Services</h3>
+        <p className="hint">Nothing new to add for this incident. Fix what is already there: the smallest change wins.</p>
+      </div>
+    );
   if (tray)
     return (
       <div className="tray" aria-label="Services">

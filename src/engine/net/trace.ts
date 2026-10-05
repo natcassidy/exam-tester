@@ -380,16 +380,9 @@ function albToTargets(board: Board, alb: Component, nodes: Eni[], p: Protocol, o
     hops.push({ at: { kind: 'component', id: target.id }, check: 'lb-target-health', result: 'deny', explain: `${target.name} has no running instances in a working AZ. The target group has 0 healthy targets, so the ALB returns HTTP 503.` });
     return { ok: false, hops, returnHops: [], via: 'local' };
   }
-  if (app && app.healthPath !== cfg.healthCheck.path) {
-    hops.push({
-      at: { kind: 'component', id: alb.id },
-      check: 'lb-target-health',
-      result: 'deny',
-      matched: { objectId: alb.id, ruleRef: 'health check path' },
-      explain: `Health checks request ${cfg.healthCheck.path}, but ${target.name} serves ${app.healthPath}. Every target fails its health check (0/${targets.length} healthy), so the ALB returns HTTP 503.`,
-    });
-    return { ok: false, hops, returnHops: [], via: 'local' };
-  }
+  // Health checks ask for a path the app doesn't serve: every target is unhealthy. An ALB then
+  // fails open and routes requests to all registered targets anyway.
+  const pathMismatch = !!app && app.healthPath !== cfg.healthCheck.path;
   // A new connection from an ALB node to a target. With cross-zone on, any node can reach any target.
   let firstFail: LegResult | null = null;
   for (const node of nodes) {
@@ -397,11 +390,20 @@ function albToTargets(board: Board, alb: Component, nodes: Eni[], p: Protocol, o
     for (const t of candidates) {
       const l = leg(board, node, t, p, cfg.targetPort, opts);
       if (l.ok) {
-        const healthy = targets.filter((x) => leg(board, node, x, p, cfg.targetPort, opts).ok).length;
+        const healthy = pathMismatch ? 0 : targets.filter((x) => leg(board, node, x, p, cfg.targetPort, opts).ok).length;
+        const health: Hop = pathMismatch
+          ? {
+              at: { kind: 'component', id: alb.id },
+              check: 'lb-target-health',
+              result: 'info',
+              matched: { objectId: alb.id, ruleRef: 'health check path' },
+              explain: `0/${targets.length} healthy: health checks request ${cfg.healthCheck.path}, but ${target.name} serves ${app!.healthPath}. With no healthy target the ALB fails open and routes to every registered target, so this request still gets through.`,
+            }
+          : { at: { kind: 'component', id: alb.id }, check: 'lb-target-health', result: 'allow', explain: `New connection from the ALB node in ${node.azId} (${node.ip}) to ${target.name} on port ${cfg.targetPort}. ${healthy}/${targets.length} targets reachable and passing ${cfg.healthCheck.path}.` };
         return {
           ok: true,
           hops: [
-            { at: { kind: 'component', id: alb.id }, check: 'lb-target-health', result: 'allow', explain: `New connection from the ALB node in ${node.azId} (${node.ip}) to ${target.name} on port ${cfg.targetPort}. ${healthy}/${targets.length} targets reachable and passing ${cfg.healthCheck.path}.` },
+            health,
             ...l.hops,
           ],
           returnHops: l.returnHops,
@@ -414,7 +416,9 @@ function albToTargets(board: Board, alb: Component, nodes: Eni[], p: Protocol, o
   const f = firstFail ?? { ok: false, hops: [], returnHops: [], via: 'local' as PathVia };
   return {
     ok: false,
-    hops: [{ at: { kind: 'component', id: alb.id }, check: 'lb-target-health', result: f.hops.length ? 'info' : 'deny', explain: `The ALB can't open a connection to any ${target.name} instance on port ${cfg.targetPort}, so health checks fail and clients get HTTP 502/503.` }, ...f.hops],
+    hops: [{ at: { kind: 'component', id: alb.id }, check: 'lb-target-health', result: f.hops.length ? 'info' : 'deny', explain: f.returnHops.some((h) => h.result === 'deny')
+          ? `Requests reach ${target.name} on port ${cfg.targetPort}, but the responses never make it back. Health checks time out too (0/${targets.length} healthy), the ALB fails open, and clients wait until they get HTTP 504 Gateway Timeout.`
+          : `The ALB can't open a connection to any ${target.name} instance on port ${cfg.targetPort}, so health checks fail (0/${targets.length} healthy) and clients get HTTP 502/504.` }, ...f.hops],
     returnHops: f.returnHops,
     via: 'local',
   };
@@ -467,7 +471,7 @@ export function traceFlow(board: Board, flow: Flow, opts: TraceOptions = {}): Tr
   if (src.placement.kind !== 'subnet') {
     return {
       result: 'delivered',
-      hops: [{ at: { kind: 'component', id: src.id }, check: 'route', result: 'info', explain: `${src.name} runs outside your VPC in an AWS-managed network with access to public AWS endpoints. Network-level checks don't apply; permissions (IAM) arrive in Stage 2.` }],
+      hops: [{ at: { kind: 'component', id: src.id }, check: 'route', result: 'info', explain: `${src.name} runs outside your VPC in an AWS-managed network with access to public AWS endpoints. Network-level checks don't apply; whether the call is allowed is an IAM question (switch the tracer to API call).` }],
       returnHops: [],
       via: 'none',
     };
@@ -573,7 +577,7 @@ function traceFromInternet(board: Board, dst: Component, p: Protocol, port: numb
   }
 
   if (cfg.type === 'apigw' || cfg.type === 'sqs' || cfg.type === 'lambda' || cfg.type === 'dynamodb') {
-    hops.push({ at: { kind: 'component', id: dst.id }, check: 'edge', result: 'info', explain: `${dst.name} is a public regional endpoint. Network reachability is not the control here; authentication and IAM are (Stage 2).` });
+    hops.push({ at: { kind: 'component', id: dst.id }, check: 'edge', result: 'info', explain: `${dst.name} is a public regional endpoint. Network reachability is not the control here; authentication and IAM are (switch the tracer to API call).` });
     return { result: 'delivered', hops, returnHops: [], via: 'none', latencyMs: city.region };
   }
 

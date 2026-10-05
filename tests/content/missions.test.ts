@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MISSIONS } from '../../src/content/missions';
+import { ALL_MISSIONS, MISSIONS } from '../../src/content/missions';
 import { QUESTION_BY_ID, QUESTIONS } from '../../src/content/questions';
 import { CONCEPT_BY_ID } from '../../src/content/concepts';
 import { createBoardFromLayout } from '../../src/engine/board';
@@ -33,22 +33,28 @@ describe.each(MISSIONS.map((m) => [m.id, m] as const))('mission %s', (_id, missi
 
   it('has at least 3 mistakes', () => expect(mission.mistakes.length).toBeGreaterThanOrEqual(3));
 
+});
+
+describe.each(ALL_MISSIONS.map((m) => [m.id, m] as const))('content of %s', (_id, mission) => {
   it('references only concepts and questions that exist', () => {
     for (const c of mission.concepts) expect(CONCEPT_BY_ID[c], c).toBeDefined();
     for (const ev of mission.events) for (const c of ev.concepts) expect(CONCEPT_BY_ID[c], `${ev.id} → ${c}`).toBeDefined();
     for (const q of mission.questions) expect(QUESTION_BY_ID[q], q).toBeDefined();
-    expect(mission.questions.length).toBeGreaterThanOrEqual(3);
-    expect(mission.questions.length).toBeLessThanOrEqual(5);
+    const [min, max] = mission.mode === 'diff' ? [2, 3] : [3, 5];
+    expect(mission.questions.length).toBeGreaterThanOrEqual(min);
+    expect(mission.questions.length).toBeLessThanOrEqual(max);
   });
 
   it('every requirement is covered by an event', () => {
     for (const req of mission.requirements) expect(mission.events.some((e) => e.requirementIds?.includes(req.id)), req.id).toBe(true);
   });
+
+  it('has a unique id', () => expect(ALL_MISSIONS.filter((m) => m.id === mission.id)).toHaveLength(1));
 });
 
 describe('question bank', () => {
-  it('has 20 Stage 1 questions with every option explained', () => {
-    expect(QUESTIONS.length).toBeGreaterThanOrEqual(20);
+  it('has 50+ questions with every option explained', () => {
+    expect(QUESTIONS.length).toBeGreaterThanOrEqual(50);
     for (const q of QUESTIONS) {
       for (const c of q.concepts) expect(CONCEPT_BY_ID[c], `${q.id} → ${c}`).toBeDefined();
       for (const o of q.options) expect(o.why.length, `${q.id}/${o.id}`).toBeGreaterThan(10);

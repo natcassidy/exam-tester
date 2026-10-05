@@ -1,12 +1,23 @@
 import { useRef } from 'react';
-import { MISSIONS } from '../../content/missions';
-import { useGame } from '../../store/game';
+import { ALL_MISSIONS } from '../../content/missions';
+import { Mode, modeOf, useGame } from '../../store/game';
+
+const MODES: { id: Mode; label: string; short: string }[] = [
+  { id: 'build', label: 'Build', short: 'Build' },
+  { id: 'incident', label: 'Incidents', short: 'Incidents' },
+  { id: 'diff', label: 'Spot the Difference', short: 'Diff' },
+];
 import { Stars } from './Abbr';
 
 export function TopBar() {
   const current = useGame((s) => s.currentMissionId);
   const best = useGame((s) => s.best);
   const setMission = useGame((s) => s.setMission);
+  const setMode = useGame((s) => s.setMode);
+  const select = useGame((s) => s.select);
+  const mission = useGame((s) => s.mission());
+  const mode = modeOf(mission);
+  const missions = ALL_MISSIONS.filter((m) => modeOf(m) === mode);
   const openManual = useGame((s) => s.openManual);
   const openTrace = useGame((s) => s.openTrace);
   const exportProgress = useGame((s) => s.exportProgress);
@@ -36,8 +47,16 @@ export function TopBar() {
       <div className="logo">
         BLAST<b>/</b>RADIUS
       </div>
+      <div className="modes" role="tablist" aria-label="Game mode">
+        {MODES.map((m) => (
+          <button key={m.id} role="tab" aria-selected={mode === m.id} className={mode === m.id ? 'on' : ''} onClick={() => setMode(m.id)}>
+            <span className="long">{m.label}</span>
+            <span className="short">{m.short}</span>
+          </button>
+        ))}
+      </div>
       <nav className="chips" aria-label="Missions">
-        {MISSIONS.map((m, i) => (
+        {missions.map((m, i) => (
           <button key={m.id} className={`chip ${m.id === current ? 'active' : ''}`} onClick={() => setMission(m.id)} aria-current={m.id === current}>
             <span className="n">{String(i + 1).padStart(2, '0')}</span>
             {m.title}
@@ -46,9 +65,23 @@ export function TopBar() {
         ))}
       </nav>
       <div className="top-actions">
-        <button className="btn" onClick={() => openTrace(true)} title="Run an ad-hoc packet trace">
-          ⟿ <span className="label">Trace</span>
-        </button>
+        {mode !== 'diff' && (
+          <>
+            <button className="btn" onClick={() => openTrace(true)} title="Run an ad-hoc packet trace or simulate an API call">
+              ⟿ <span className="label">Trace</span>
+            </button>
+            <button
+              className="btn"
+              onClick={() => {
+                openTrace(false);
+                select({ kind: 'iam' });
+              }}
+              title="Roles, users, KMS keys and SCPs"
+            >
+              ⚿ <span className="label">IAM</span>
+            </button>
+          </>
+        )}
         <button className="btn" onClick={() => openManual('index')} title="Field Manual">
           ☰ <span className="label">Field Manual</span>
         </button>

@@ -579,9 +579,10 @@ export function removeNaclRule(board0: Board, naclId: string, direction: 'inboun
   return { ok: true, board };
 }
 
-export function createNacl(board0: Board, vpcId: string, name: string): OpResult {
+export function createNacl(board0: Board, vpcId: string, name: string, fixedId?: string): OpResult {
   const board = clone(board0);
-  const id = nextId(board, 'acl');
+  if (fixedId && board.nacls[fixedId]) return { ok: false, error: `Network ACL ${fixedId} already exists.` };
+  const id = fixedId ?? nextId(board, 'acl');
   // A new custom NACL denies everything until you add rules (only the default NACL allows all).
   board.nacls[id] = { id, name, vpcId, inbound: [], outbound: [] };
   return { ok: true, board, id };

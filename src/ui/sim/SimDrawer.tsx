@@ -7,6 +7,41 @@ import { useGame, Selection } from '../../store/game';
 import { Stars } from '../shell/Abbr';
 import { Timeline } from './Timeline';
 import { resolveEndpoint } from '../../engine/select';
+import type { IncidentScore } from '../../engine/incident/score';
+import { listSuspects } from '../../engine/incident/suspects';
+import type { Mission } from '../../engine/model';
+
+function IncidentReport({ mission, report }: { mission: Mission; report: IncidentScore }) {
+  const inc = mission.incident!;
+  const suspects = listSuspects(mission.startingBoard!);
+  const name = (id: string | null) => {
+    const s = suspects.find((x) => x.id === id);
+    return s ? `${s.group} · ${s.label}` : (id ?? 'none');
+  };
+  const row = (label: string, pts: number, max: number, text: string) => (
+    <div className="report-row">
+      <span className={`tag ${pts === max ? 'pass' : pts > 0 ? 'warn' : 'fail'}`}>
+        {pts}/{max}
+      </span>
+      <b>{label}</b>
+      <span className="hint">{text}</span>
+    </div>
+  );
+  return (
+    <article className="result report" style={{ gridColumn: '1 / -1' }}>
+      <div className="result-head">
+        <h4>Incident report</h4>
+        <Stars n={report.stars} />
+        <span className="mono">{report.total}/100</span>
+      </div>
+      {row('Root cause', report.rootCause.points, 50, report.rootCause.correct ? `Correct: ${name(inc.rootCause)}.` : `You named ${name(report.rootCause.picked)}. It was ${name(inc.rootCause)}.`)}
+      {row('Fix', report.fix.points, 30, report.fix.allPass ? 'Every check passes again.' : report.fix.symptomFixed ? 'The alert cleared, but another requirement now fails.' : 'The alert is still firing.')}
+      {row('Investigation', report.actions.points, 10, `${report.actions.used} actions (par ${report.actions.par}, budget ${report.actions.budget}).${report.fix.symptomFixed ? '' : ' Counts once the alert is fixed.'}`)}
+      {row('Blast radius', report.collateral.points, 10, !report.fix.symptomFixed ? 'Counts once the alert is fixed.' : report.collateral.changes.length ? `Changes nobody needed: ${report.collateral.changes.map((c) => `${c.desc}${c.danger ? ' (dangerous)' : ''}`).join('; ')}.` : 'You changed only what the fix needed.')}
+      <div className="lesson">{inc.rootCauseExplain}</div>
+    </article>
+  );
+}
 
 function fixSelection(id: string | undefined, board: ReturnType<ReturnType<typeof useGame.getState>['board']>): Selection | null {
   if (!id) return null;
@@ -116,12 +151,21 @@ export function SimDrawer() {
   const setOpen = useGame((s) => s.openSim);
   const runSim = useGame((s) => s.runSim);
   const openQuestions = useGame((s) => s.openQuestions);
+  const report = useGame((s) => s.reports[mission.id]);
+  const diagnosis = useGame((s) => s.incident().diagnosis);
   const score = results ? scoreResults(mission.events, results) : null;
+  const isIncident = !!mission.incident;
   return (
     <section className={`drawer ${open ? '' : 'closed'}`} aria-label="Simulation">
       <div className="drawer-head">
-        <h3>Simulation</h3>
-        {score && (
+        <h3>{isIncident ? 'Verification' : 'Simulation'}</h3>
+        {report && (
+          <span className="score">
+            <Stars n={report.stars} />
+            <span className="hint">{report.total}/100</span>
+          </span>
+        )}
+        {!isIncident && score && (
           <span className="score">
             <Stars n={score.stars} />
             <span className="hint">
@@ -130,8 +174,8 @@ export function SimDrawer() {
           </span>
         )}
         <span style={{ flex: 1 }} />
-        <button className="btn primary" onClick={runSim}>
-          ▶ Run simulation
+        <button className="btn primary" onClick={runSim} title={isIncident && !diagnosis ? 'Diagnose the root cause first' : undefined}>
+          {isIncident ? '✓ Verify fix' : '▶ Run simulation'}
         </button>
         {results && (
           <button className="btn" onClick={() => openQuestions(true)}>
@@ -144,13 +188,19 @@ export function SimDrawer() {
       </div>
       {open && (
         <div className="drawer-body">
-          {!results && <p className="hint">Run the simulation to throw this mission's events at your design: {mission.events.map((e) => e.name).join(' · ')}.</p>}
+          {!results && !isIncident && <p className="hint">Run the simulation to throw this mission's events at your design: {mission.events.map((e) => e.name).join(' · ')}.</p>}
+          {!results && isIncident && (
+            <p className="hint">
+              Investigate, name the root cause (Diagnose), fix it with the smallest change, then Verify fix. Verification replays: {mission.events.map((e) => e.name).join(' · ')}.
+            </p>
+          )}
+          {report && <IncidentReport mission={mission} report={report} />}
           {results &&
             mission.events.map((ev) => {
               const r = results.find((x) => x.eventId === ev.id);
               return r ? <ResultCard key={ev.id + r.status + r.summary} ev={ev} r={r} /> : null;
             })}
-          {score && (
+          {score && !isIncident && (
             <div className="result" style={{ borderLeftColor: 'var(--accent)' }}>
               <div className="result-head">
                 <h4>Score by domain</h4>

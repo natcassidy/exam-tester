@@ -6,8 +6,10 @@ import { EventHandler, SimContext } from './events/context';
 import { queueBehavior } from './events/queueBehavior';
 import { reachability } from './events/reachability';
 import { traffic } from './events/traffic';
+import { iamAccess } from './events/iamAccess';
+import { fleetHealth } from './events/fleetHealth';
 
-const HANDLERS: Record<EventKind, EventHandler> = { reachability, traffic, azOutage, audit, queueBehavior, bill };
+const HANDLERS: Record<EventKind, EventHandler> = { reachability, traffic, azOutage, audit, queueBehavior, bill, iamAccess, fleetHealth };
 
 export function runEvent(board: Board, ev: EventSpec, ctx: SimContext): EventResult {
   try {
