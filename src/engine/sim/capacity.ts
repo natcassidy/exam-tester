@@ -1,7 +1,7 @@
 // Per-minute capacity model. Deterministic: no randomness.
 
 import type { AsgConfig, Board, Component, ConfigOf, LambdaConfig, TimelinePoint } from '../model';
-import { APIGW_INTEGRATION_TIMEOUT_SEC, DB_CAPACITY, INSTANCE_RPS_AT_70, LAMBDA_ACCOUNT_CONCURRENCY } from '../cost/pricing';
+import { APIGW_INTEGRATION_TIMEOUT_SEC, AURORA_CAPACITY, AURORA_QPS_PER_ACU, DB_CAPACITY, INSTANCE_RPS_AT_70, LAMBDA_ACCOUNT_CONCURRENCY } from '../cost/pricing';
 
 export interface ProfilePoint {
   min: number;
@@ -109,6 +109,24 @@ export function dbUtil(rds: ConfigOf<'rds'>, qps: number, readFraction: number):
   const cap = DB_CAPACITY[rds.instanceClass].qps;
   const primaryLoad = qps * (1 - readFraction) + (qps * readFraction) / (1 + rds.readReplicas);
   return primaryLoad / cap;
+}
+
+/** Aurora utilisation: writes on the writer; reads on the readers (reader endpoint), or the writer if there are none. */
+export function auroraUtil(cfg: ConfigOf<'aurora'>, qps: number, readFraction: number): number {
+  const cap = cfg.serverlessV2 ? cfg.maxAcu * AURORA_QPS_PER_ACU : AURORA_CAPACITY[cfg.instanceClass].qps;
+  const reads = qps * readFraction;
+  const writer = qps * (1 - readFraction) + (cfg.readers ? 0 : reads);
+  const reader = cfg.readers ? reads / cfg.readers : 0;
+  return Math.max(writer, reader) / cap;
+}
+
+/** Utilisation of the board's primary database (RDS or Aurora), or null if there is none. */
+export function primaryDbUtil(board: Board, qps: number, readFraction: number): { util: number; id: string; label: string } | null {
+  const rds = Object.values(board.components).find((c) => c.config.type === 'rds' && !c.config.replicaOf);
+  if (rds && rds.config.type === 'rds') return { util: dbUtil(rds.config, qps, readFraction), id: rds.id, label: rds.config.instanceClass };
+  const aur = Object.values(board.components).find((c) => c.config.type === 'aurora' && !c.config.globalPrimaryId);
+  if (aur && aur.config.type === 'aurora') return { util: auroraUtil(aur.config, qps, readFraction), id: aur.id, label: aur.config.serverlessV2 ? `Aurora Serverless v2 (max ${aur.config.maxAcu} ACU)` : aur.config.instanceClass };
+  return null;
 }
 
 export function lambdaLimit(board: Board, fn: Component): number {

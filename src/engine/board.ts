@@ -142,6 +142,7 @@ export const DEFAULT_NAMES: Record<ServiceType, string> = {
   snow: 'snowball',
   datasync: 'datasync',
   dms: 'dms-task',
+  savings: 'commitment',
 };
 
 export function defaultConfig(type: ServiceType): ServiceConfig {
@@ -248,6 +249,8 @@ export function defaultConfig(type: ServiceType): ServiceConfig {
       return { type, destId: null, schedule: 'once' };
     case 'dms':
       return { type, targetId: null, mode: 'full-load' };
+    case 'savings':
+      return { type, plan: 'compute-sp', termYears: 1, hourlyCommit: 0.1, instanceType: 'm5.large', count: 1 };
   }
 }
 
@@ -281,6 +284,7 @@ export const ZONE_FOR: Record<ServiceType, Placement['kind']> = {
   dx: 'onprem',
   snow: 'onprem',
   datasync: 'onprem',
+  savings: 'region',
 };
 
 export const MULTI_SUBNET: ServiceType[] = ['alb', 'asg', 'rds', 'aurora'];
@@ -387,6 +391,7 @@ export function labelOf(type: ServiceType): string {
     snow: 'A Snowball job',
     datasync: 'A DataSync task',
     dms: 'A DMS migration task',
+    savings: 'A Savings Plan or Reserved Instance commitment',
   };
   return m[type];
 }
@@ -609,6 +614,18 @@ export function validateConfig(board: Board, c: Component, cfg: ServiceConfig): 
   if (cfg.type === 'asg') {
     if (cfg.min < 0 || cfg.max < cfg.min) return 'Maximum capacity must be greater than or equal to minimum capacity.';
     if (cfg.desired < cfg.min || cfg.desired > cfg.max) return 'Desired capacity must be between the minimum and maximum capacity.';
+    const p = cfg.purchase;
+    if (p) {
+      if (p.onDemandBase < 0) return 'On-Demand base capacity must be 0 or more.';
+      if (p.spotPercent < 0 || p.spotPercent > 100) return 'The percentage of Spot above the base must be between 0 and 100.';
+      if (p.extraTypes.includes(cfg.instanceType)) return `${cfg.instanceType} is already the group's primary instance type.`;
+      if (new Set(p.extraTypes).size !== p.extraTypes.length) return 'Each instance type can be listed only once.';
+    }
+  }
+  if (cfg.type === 'savings') {
+    if (cfg.termYears !== 1 && cfg.termYears !== 3) return 'Savings Plans and Reserved Instances have 1-year or 3-year terms.';
+    if ((cfg.plan === 'compute-sp' || cfg.plan === 'ec2-instance-sp') && !(cfg.hourlyCommit > 0)) return 'A Savings Plan needs an hourly commitment greater than $0.';
+    if ((cfg.plan === 'standard-ri' || cfg.plan === 'convertible-ri') && (cfg.count < 1 || !Number.isInteger(cfg.count))) return 'Reserve at least one instance.';
   }
   if (cfg.type === 'sqs') {
     if (cfg.visibilityTimeoutSec < 0 || cfg.visibilityTimeoutSec > 43200) return 'Visibility timeout must be between 0 seconds and 12 hours (43,200 seconds).';

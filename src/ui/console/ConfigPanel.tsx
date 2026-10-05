@@ -7,7 +7,7 @@ import { NumberField, SelectField, TextField, Toggle } from './fields';
 import { RefSelect, useUpdate } from './refs';
 import { Stage3Config, Stage3Extras } from './Stage3Config';
 
-const INSTANCE_TYPES: InstanceType[] = ['t3.micro', 't3.small', 't3.medium', 't3.large', 'm5.large', 'c5.large', 'm5.xlarge'];
+export const INSTANCE_TYPES: InstanceType[] = ['t3.micro', 't3.small', 't3.medium', 't3.large', 'm5.large', 'm5a.large', 'm6i.large', 'c5.large', 'm5.xlarge'];
 const DB_CLASSES: DbInstanceClass[] = ['db.t3.micro', 'db.t3.medium', 'db.r5.large', 'db.r5.xlarge'];
 const usd = (n: number) => `≈ $${n.toFixed(2)}/mo (approx.)`;
 

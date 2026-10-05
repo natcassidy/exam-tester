@@ -47,7 +47,9 @@ export type ServiceType =
   | 'athena'
   | 'snow'
   | 'datasync'
-  | 'dms';
+  | 'dms'
+  // Stage 4: purchase commitments (Savings Plans / Reserved Instances).
+  | 'savings';
 
 // ---------- Board ----------
 
@@ -132,7 +134,7 @@ export interface Component {
 
 // ---------- Service configs ----------
 
-export type InstanceType = 't3.micro' | 't3.small' | 't3.medium' | 't3.large' | 'm5.large' | 'c5.large' | 'm5.xlarge';
+export type InstanceType = 't3.micro' | 't3.small' | 't3.medium' | 't3.large' | 'm5.large' | 'm5a.large' | 'm6i.large' | 'c5.large' | 'm5.xlarge';
 export type DbInstanceClass = 'db.t3.micro' | 'db.t3.medium' | 'db.r5.large' | 'db.r5.xlarge';
 
 export interface AlbConfig {
@@ -163,6 +165,19 @@ export type ScalingPolicy =
   | { kind: 'step'; upperCpu: number; addInstances: number }
   | { kind: 'scheduled'; actions: { atMin: number; desired: number }[] };
 
+export type SpotAllocation = 'lowest-price' | 'capacity-optimized' | 'price-capacity-optimized';
+
+/** Stage 4: mixed instances policy (On-Demand base + Spot above it). */
+export interface PurchaseOptions {
+  /** Instances always launched On-Demand, whatever the Spot market does. */
+  onDemandBase: number;
+  /** Share of capacity above the base launched as Spot (0-100). */
+  spotPercent: number;
+  allocation: SpotAllocation;
+  /** More instance types the group may launch (each type × AZ is a separate Spot pool). */
+  extraTypes: InstanceType[];
+}
+
 export interface AsgConfig {
   type: 'asg';
   instanceType: InstanceType;
@@ -175,6 +190,8 @@ export interface AsgConfig {
   healthCheckType: 'EC2' | 'ELB';
   healthCheckGraceSec: number;
   app: AppSpec;
+  /** Stage 4: Spot / On-Demand mix. Absent = all On-Demand. */
+  purchase?: PurchaseOptions;
 }
 
 export interface RdsConfig {
@@ -450,6 +467,23 @@ export interface DmsConfig {
   mode: 'full-load' | 'full-load-and-cdc';
 }
 
+// ---------- Stage 4 configs ----------
+
+export type CommitmentPlan = 'compute-sp' | 'ec2-instance-sp' | 'standard-ri' | 'convertible-ri';
+
+/** A pricing commitment for the account. It is not a resource: it changes what usage costs. */
+export interface SavingsConfig {
+  type: 'savings';
+  plan: CommitmentPlan;
+  termYears: 1 | 3;
+  /** Savings Plans: committed spend in $/hour (at the discounted rate). */
+  hourlyCommit: number;
+  /** EC2 Instance Savings Plan: the family is taken from this type. Reserved Instances: the type reserved. */
+  instanceType: InstanceType;
+  /** Reserved Instances: how many. */
+  count: number;
+}
+
 export type ServiceConfig =
   | AlbConfig
   | Ec2Config
@@ -479,7 +513,8 @@ export type ServiceConfig =
   | AthenaConfig
   | SnowConfig
   | DataSyncConfig
-  | DmsConfig;
+  | DmsConfig
+  | SavingsConfig;
 
 export type ConfigOf<T extends ServiceType> = Extract<ServiceConfig, { type: T }>;
 
@@ -630,7 +665,10 @@ export type EventKind =
   | 'connectivity'
   | 'globalLatency'
   | 'storageLifecycle'
-  | 'streamIngest';
+  | 'streamIngest'
+  // Stage 4
+  | 'spotReclaim'
+  | 'commitment';
 
 export interface EventSpec {
   id: string;
@@ -720,6 +758,9 @@ export interface UsageProfile {
   migrationTb?: number;
   /** Data changed during the migration window that an online sync has to copy. */
   migrationChangeGb?: number;
+  // Stage 4
+  /** Average database queries per second, used to size Aurora Serverless v2 capacity. */
+  dbAvgQps?: number;
 }
 
 export interface CostLineItem {
@@ -801,6 +842,17 @@ export interface Mission {
   startingBoard?: Board;
   incident?: IncidentSpec;
   diff?: DiffSpec;
+  /** Stage 4 refactor missions: the requirement change and how cost is measured. */
+  refactor?: RefactorSpec;
+}
+
+// ---------- Refactors (Stage 4) ----------
+
+export interface RefactorSpec {
+  /** The requirement change that kicks off the refactor, in the client's words. */
+  change: string;
+  /** Events whose `metrics.monthly` add up to the cost being optimised (default: every bill event). */
+  costEvents?: string[];
 }
 
 // ---------- Incidents (Stage 2) ----------

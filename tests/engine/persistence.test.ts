@@ -15,7 +15,7 @@ describe('progress files', () => {
   it('migrates a Stage 1 (v1) save without losing boards or scores', () => {
     const v1 = { schemaVersion: 1, currentMissionId: 'dropshop', boards: { dropshop: { marker: true } }, best: { dropshop: { stars: 2, points: 70, at: 'x' } }, questionHistory: [{ questionId: 'q1', chosen: ['a'], correct: true, at: 'x' }], conceptEvidence: [], settings: { reducedMotion: true } };
     const s = validateImport({ app: 'blast-radius', state: v1 });
-    expect(s.schemaVersion).toBe(2);
+    expect(s.schemaVersion).toBe(SCHEMA_VERSION);
     expect(s.boards.dropshop).toEqual({ marker: true });
     expect(s.best.dropshop.points).toBe(70);
     expect(s.settings.reducedMotion).toBe(true);
