@@ -64,10 +64,11 @@ export function drawExam(bank: Question[], seed: string, total = EXAM_QUESTIONS)
 }
 
 /**
- * Options in a stable per-question order. Many bank questions list the answer first, so every
- * question surface shows a shuffled order and letters by position; answers keep the option ids.
+ * Options in a stable per-question order. Many bank questions (and every Spot the Difference round)
+ * list the answer first, so every question surface shows a shuffled order and letters by position;
+ * answers keep the option ids. Pass a question, or `{ id: missionId, options }` for a diff round.
  */
-export function displayOptions(q: Question): Question['options'] {
+export function displayOptions<O extends { id: string }>(q: { id: string; options: O[] }): O[] {
   return [...q.options].sort((a, b) => hashString(`${q.id}:${a.id}`) - hashString(`${q.id}:${b.id}`));
 }
 
