@@ -28,6 +28,11 @@ const CHECK_LABEL: Record<string, string> = {
   exists: 'Exists',
   'endpoint-policy': 'Endpoint policy',
   iam: 'Permissions (IAM)',
+  peering: 'VPC peering',
+  tgw: 'Transit gateway',
+  vpn: 'Site-to-Site VPN',
+  dx: 'Direct Connect',
+  region: 'Region',
 };
 
 const STEP_LABEL: Record<string, string> = {
@@ -127,8 +132,10 @@ export function HopList({ hops, returnHops }: { hops: Hop[]; returnHops: Hop[] }
 
 function endpointOptions(board: Board, side: 'from' | 'to'): { value: Endpoint; label: string }[] {
   const out: { value: Endpoint; label: string }[] = [{ value: 'internet', label: 'Internet' }];
+  if (board.onprem && side === 'from') out.push({ value: 'onprem', label: `${board.onprem.name} (on-premises, ${board.onprem.cidr})` });
   for (const c of Object.values(board.components)) {
     if (c.type === 'igw' || c.type === 'vpce' || c.type === 'waf') continue;
+    if (c.placement.kind === 'onprem' || ['pcx', 'vgw', 'tgw', 'backup', 'athena', 'firehose', 'kinesis', 'dms'].includes(c.type)) continue;
     if (side === 'from' && c.placement.kind !== 'subnet' && c.type !== 'lambda') continue;
     if (side === 'from' && (c.type === 'alb' || c.type === 'nat')) continue;
     out.push({ value: c.id, label: `${c.name} (${SERVICES[c.type].name})` });

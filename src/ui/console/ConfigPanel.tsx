@@ -1,39 +1,15 @@
-import type { Component, DbInstanceClass, InstanceType, ScalingPolicy, ServiceConfig, ServiceType } from '../../engine/model';
-import { updateConfig, componentsOfType, vpcOfComponent } from '../../engine/board';
+import type { Component, DbInstanceClass, InstanceType, ScalingPolicy } from '../../engine/model';
+import { componentsOfType, vpcOfComponent } from '../../engine/board';
 import { HOURS_PER_MONTH, PRICING } from '../../engine/cost/pricing';
 import { useGame } from '../../store/game';
 import { bucketPolicyDoc } from '../../engine/iam/access';
 import { NumberField, SelectField, TextField, Toggle } from './fields';
+import { RefSelect, useUpdate } from './refs';
+import { Stage3Config, Stage3Extras } from './Stage3Config';
 
 const INSTANCE_TYPES: InstanceType[] = ['t3.micro', 't3.small', 't3.medium', 't3.large', 'm5.large', 'c5.large', 'm5.xlarge'];
 const DB_CLASSES: DbInstanceClass[] = ['db.t3.micro', 'db.t3.medium', 'db.r5.large', 'db.r5.xlarge'];
 const usd = (n: number) => `≈ $${n.toFixed(2)}/mo (approx.)`;
-
-function useUpdate(c: Component) {
-  const apply = useGame((s) => s.apply);
-  return (patch: Partial<ServiceConfig> | Record<string, unknown>) => apply((b) => updateConfig(b, c.id, patch as Partial<ServiceConfig>));
-}
-
-function RefSelect({ label, value, types, onChange, exclude, hint }: { label: string; value: string | null; types: ServiceType[]; onChange: (v: string | null) => void; exclude?: string; hint?: string }) {
-  const board = useGame((s) => s.board());
-  const opts = Object.values(board.components).filter((c) => types.includes(c.type) && c.id !== exclude);
-  return (
-    <label className="field">
-      <span>
-        {label}
-        {hint && <div className="hint">{hint}</div>}
-      </span>
-      <select value={value ?? ''} onChange={(e) => onChange(e.target.value || null)}>
-        <option value="">— none —</option>
-        {opts.map((o) => (
-          <option key={o.id} value={o.id}>
-            {o.name}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
 
 function PolicyEditor({ policy, onChange }: { policy: ScalingPolicy; onChange: (p: ScalingPolicy) => void }) {
   return (
@@ -148,6 +124,7 @@ export function ConfigPanel({ c }: { c: Component }) {
           <Toggle label="Publicly accessible" value={cfg.publiclyAccessible} onChange={(v) => update({ publiclyAccessible: v })} />
           <Toggle label="Storage encrypted" value={cfg.storageEncrypted} onChange={(v) => update({ storageEncrypted: v })} hint="In AWS this can only be chosen at creation." />
           <NumberField label="Allocated storage" value={cfg.allocatedStorageGb} min={20} max={65536} suffix="GB" onChange={(v) => update({ allocatedStorageGb: v })} />
+          <Stage3Extras c={c} />
         </>
       );
     case 's3':
@@ -171,6 +148,7 @@ export function ConfigPanel({ c }: { c: Component }) {
           />
           {cfg.policy === 'cloudfront-oac' && <RefSelect label="Distribution (AWS:SourceArn)" value={cfg.policyDistributionId} types={['cloudfront']} onChange={(v) => update({ policyDistributionId: v })} />}
           <BucketPolicyView c={c} />
+          <Stage3Extras c={c} />
         </>
       );
     case 'sqs':
@@ -203,7 +181,8 @@ export function ConfigPanel({ c }: { c: Component }) {
               onBlur={(e) => update({ reservedConcurrency: e.target.value === '' ? null : Number(e.target.value) })}
             />
           </label>
-          <RefSelect label="Event source (SQS)" value={cfg.eventSourceId} types={['sqs']} onChange={(v) => update({ eventSourceId: v })} />
+          <RefSelect label="Event source (SQS or Kinesis)" value={cfg.eventSourceId} types={['sqs', 'kinesis']} onChange={(v) => update({ eventSourceId: v })} />
+          <Stage3Extras c={c} />
         </>
       );
     case 'apigw':
@@ -226,6 +205,7 @@ export function ConfigPanel({ c }: { c: Component }) {
             </>
           )}
           <Toggle label="Point-in-time recovery" value={cfg.pitr} onChange={(v) => update({ pitr: v })} />
+          <Stage3Extras c={c} />
         </>
       );
     case 'cloudfront':
@@ -241,7 +221,7 @@ export function ConfigPanel({ c }: { c: Component }) {
       return (
         <>
           <TextField label="Record name" value={cfg.recordName} onChange={(v) => update({ recordName: v })} />
-          <RefSelect label="Alias target" value={cfg.aliasTargetId} types={['cloudfront', 'alb', 's3', 'apigw']} onChange={(v) => update({ aliasTargetId: v })} />
+          <Stage3Extras c={c} />
         </>
       );
     case 'waf':
@@ -289,5 +269,7 @@ export function ConfigPanel({ c }: { c: Component }) {
         </div>
       );
     }
+    default:
+      return <Stage3Config c={c} />;
   }
 }

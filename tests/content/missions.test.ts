@@ -53,8 +53,8 @@ describe.each(ALL_MISSIONS.map((m) => [m.id, m] as const))('content of %s', (_id
 });
 
 describe('question bank', () => {
-  it('has 50+ questions with every option explained', () => {
-    expect(QUESTIONS.length).toBeGreaterThanOrEqual(50);
+  it('has 90+ questions with every option explained', () => {
+    expect(QUESTIONS.length).toBeGreaterThanOrEqual(90);
     for (const q of QUESTIONS) {
       for (const c of q.concepts) expect(CONCEPT_BY_ID[c], `${q.id} → ${c}`).toBeDefined();
       for (const o of q.options) expect(o.why.length, `${q.id}/${o.id}`).toBeGreaterThan(10);

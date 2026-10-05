@@ -18,6 +18,7 @@ import type {
   Subnet,
   Vpc,
   VpcLayout,
+  VpcSpec,
 } from './model';
 import { cidrContainsCidr, cidrsOverlap, hostIp, isCanonicalCidr, isValidCidr } from './net/cidr';
 import { validateNaclRule } from './net/nacl';
@@ -40,31 +41,73 @@ export function allowAllNacl(id: string, name: string, vpcId: string): Nacl {
 
 export function createBoardFromLayout(layout: VpcLayout): Board {
   const board = emptyBoard();
-  const region = { id: layout.regionId, name: layout.regionName, vpcs: [] as Vpc[], regionalServices: [] as ComponentId[] };
-  board.regions.push(region);
-  const v = layout.vpc;
-  if (!v) return board;
+  board.regions.push({ id: layout.regionId, name: layout.regionName, vpcs: [], regionalServices: [] });
+  if (layout.vpc) addVpc(board, layout.regionId, layout.vpc, true);
+  for (const x of layout.extraVpcs ?? []) {
+    if (!board.regions.some((r) => r.id === x.regionId)) board.regions.push({ id: x.regionId, name: x.regionName, vpcs: [], regionalServices: [] });
+    if (x.vpc) addVpc(board, x.regionId, x.vpc, false);
+  }
+  if (layout.onprem) board.onprem = { id: 'onprem', name: layout.onprem.name, cidr: layout.onprem.cidr, internetMbps: layout.onprem.internetMbps, components: [] };
+  return board;
+}
+
+/** Default NACL id of a VPC: nacl-default for a mission's first VPC, nacl-default-<vpc> for the rest. */
+export function defaultNaclId(board: Board, vpcId: string): string {
+  const first = board.regions[0]?.vpcs[0];
+  return !first || first.id === vpcId ? 'nacl-default' : `nacl-default-${vpcId}`;
+}
+
+function addVpc(board: Board, regionId: string, v: VpcSpec, first: boolean) {
+  const region = board.regions.find((r) => r.id === regionId)!;
   const vpc: Vpc = { id: v.id, cidr: v.cidr, attachments: [], azs: v.azs.map((a) => ({ id: a.id, name: a.name, subnets: [] })) };
+  if (v.name) vpc.name = v.name;
+  if (v.accountId) vpc.accountId = v.accountId;
   region.vpcs.push(vpc);
-  board.nacls['nacl-default'] = allowAllNacl('nacl-default', 'default-nacl', v.id);
+  const defNacl = first ? 'nacl-default' : `nacl-default-${v.id}`;
+  board.nacls[defNacl] = allowAllNacl(defNacl, first ? 'default-nacl' : `default-nacl (${v.name ?? v.id})`, v.id);
   for (const rt of v.routeTables) {
     board.routeTables[rt.id] = { id: rt.id, name: rt.name, vpcId: v.id, routes: [{ dest: v.cidr, target: 'local' }, ...clone(rt.routes)] };
   }
   for (const s of v.subnets) {
     const az = vpc.azs.find((a) => a.id === s.az);
     if (!az) throw new Error(`Layout subnet ${s.id} references unknown AZ ${s.az}`);
-    const naclId = s.naclId ?? 'nacl-default';
+    const naclId = s.naclId ?? defNacl;
     if (!board.nacls[naclId]) board.nacls[naclId] = allowAllNacl(naclId, naclId, v.id);
     az.subnets.push({ id: s.id, name: s.name, cidr: s.cidr, azId: s.az, tier: s.tier, routeTableId: s.routeTableId, naclId, components: [] });
   }
   if (v.igw) {
     const igw = makeComponent(board, 'igw', { kind: 'vpcAttach', refId: v.id });
-    igw.id = 'igw-1';
-    igw.name = 'igw-1';
+    igw.id = first ? 'igw-1' : `igw-${v.id}`;
+    igw.name = first ? 'igw-1' : `igw-${v.name ?? v.id}`;
     board.components[igw.id] = igw;
     vpc.attachments.push(igw.id);
   }
-  return board;
+}
+
+function allVpcsOf(board: Board): Vpc[] {
+  return board.regions.flatMap((r) => r.vpcs);
+}
+
+/** Region a component lives in ('global' for edge services, 'onprem' for the data centre). */
+export function regionOf(board: Board, c: Component): string {
+  if (c.placement.kind === 'edge') return 'global';
+  if (c.placement.kind === 'onprem') return 'onprem';
+  if (c.placement.kind === 'region') return c.placement.refId;
+  const vpc = vpcOfComponent(board, c);
+  return board.regions.find((r) => r.vpcs.some((v) => v.id === vpc?.id))?.id ?? board.regions[0]?.id ?? 'us-east-1';
+}
+
+export function regionOfVpc(board: Board, vpcId: string): string | undefined {
+  return board.regions.find((r) => r.vpcs.some((v) => v.id === vpcId))?.id;
+}
+
+export function vpcById(board: Board, vpcId: string): Vpc | undefined {
+  return allVpcsOf(board).find((v) => v.id === vpcId);
+}
+
+/** The account that owns a VPC or component (Stage 3 accounts layer). */
+export function accountOf(board: Board, x: { accountId?: string }): string {
+  return x.accountId ?? board.iam?.accountId ?? '111122223333';
 }
 
 // ---------- Catalog defaults ----------
@@ -85,6 +128,20 @@ export const DEFAULT_NAMES: Record<ServiceType, string> = {
   nat: 'nat',
   igw: 'igw',
   vpce: 's3-endpoint',
+  aurora: 'aurora-cluster',
+  pcx: 'pcx',
+  tgw: 'tgw',
+  vgw: 'vgw',
+  cgw: 'cgw',
+  vpn: 'vpn',
+  dx: 'dx',
+  backup: 'backup-plan',
+  kinesis: 'stream',
+  firehose: 'delivery',
+  athena: 'athena',
+  snow: 'snowball',
+  datasync: 'datasync',
+  dms: 'dms-task',
 };
 
 export function defaultConfig(type: ServiceType): ServiceConfig {
@@ -150,6 +207,47 @@ export function defaultConfig(type: ServiceType): ServiceConfig {
       return { type };
     case 'vpce':
       return { type, service: 's3', routeTableIds: [] };
+    case 'aurora':
+      return {
+        type,
+        engine: 'aurora-mysql',
+        port: 3306,
+        instanceClass: 'db.r6g.large',
+        readers: 0,
+        serverlessV2: false,
+        minAcu: 0.5,
+        maxAcu: 16,
+        backupRetentionDays: 7,
+        storageEncrypted: true,
+        publiclyAccessible: false,
+        globalPrimaryId: null,
+      };
+    case 'pcx':
+      return { type, peerVpcId: null };
+    case 'tgw':
+      return { type, vpcAttachments: [], routeTables: [{ id: 'tgw-rtb-default', name: 'default', associations: [], propagations: [], routes: [] }], ramShared: false };
+    case 'vgw':
+      return { type };
+    case 'cgw':
+      return { type, bgpAsn: 65000 };
+    case 'vpn':
+      return { type, cgwId: null, attachTo: null };
+    case 'dx':
+      return { type, speedGbps: 1, attachTo: null, encryption: 'none' };
+    case 'backup':
+      return { type, resourceIds: [], frequencyHours: 24, retentionDays: 35, copyRegion: null, copyToOtherAccount: false, vaultLock: 'none' };
+    case 'kinesis':
+      return { type, mode: 'provisioned', shards: 1, retentionHours: 24 };
+    case 'firehose':
+      return { type, sourceId: null, destId: null, bufferSec: 300, bufferMb: 5, format: 'json' };
+    case 'athena':
+      return { type, sourceId: null };
+    case 'snow':
+      return { type, devices: 1, destId: null };
+    case 'datasync':
+      return { type, destId: null, schedule: 'once' };
+    case 'dms':
+      return { type, targetId: null, mode: 'full-load' };
   }
 }
 
@@ -169,10 +267,25 @@ export const ZONE_FOR: Record<ServiceType, Placement['kind']> = {
   asg: 'subnet',
   rds: 'subnet',
   nat: 'subnet',
+  aurora: 'subnet',
+  pcx: 'vpcAttach',
+  vgw: 'vpcAttach',
+  tgw: 'region',
+  backup: 'region',
+  kinesis: 'region',
+  firehose: 'region',
+  athena: 'region',
+  dms: 'region',
+  cgw: 'onprem',
+  vpn: 'onprem',
+  dx: 'onprem',
+  snow: 'onprem',
+  datasync: 'onprem',
 };
 
-export const MULTI_SUBNET: ServiceType[] = ['alb', 'asg', 'rds'];
-export const HAS_ENI: ServiceType[] = ['alb', 'ec2', 'asg', 'rds'];
+export const MULTI_SUBNET: ServiceType[] = ['alb', 'asg', 'rds', 'aurora'];
+export const HAS_ENI: ServiceType[] = ['alb', 'ec2', 'asg', 'rds', 'aurora'];
+export const DATABASES: ServiceType[] = ['rds', 'aurora'];
 
 function nextId(board: Board, prefix: string): string {
   board.seq += 1;
@@ -222,8 +335,15 @@ export function validatePlacement(board: Board, type: ServiceType, zone: Placeme
       region: 'the Region (it is a regional, managed service that does not live in a subnet)',
       vpcAttach: 'the VPC attachment strip (it attaches to the VPC, not to a subnet)',
       subnet: 'a subnet (it gets network interfaces inside your VPC)',
+      onprem: 'the on-premises data centre',
     };
     return `${labelOf(type)} must be placed in ${where[need]}.`;
+  }
+  if (zone.kind === 'onprem' && !board.onprem) return 'This mission has no on-premises data centre.';
+  if (zone.kind === 'region' && !board.regions.some((r) => r.id === zone.refId)) return 'Unknown Region.';
+  if (type === 'vgw') {
+    const existing = componentsOfType(board, 'vgw').find((c) => c.placement.refId === zone.refId);
+    if (existing) return `This VPC already has ${existing.name} attached. A VPC can have only one virtual private gateway.`;
   }
   if (zone.kind === 'subnet' && !findSubnet(board, zone.refId)) return 'Unknown subnet.';
   if (type === 'nat' && zone.kind === 'subnet' && !isPublicSubnet(board, zone.refId)) {
@@ -253,6 +373,20 @@ export function labelOf(type: ServiceType): string {
     nat: 'A NAT gateway',
     igw: 'An internet gateway',
     vpce: 'A gateway endpoint',
+    aurora: 'An Aurora cluster',
+    pcx: 'A VPC peering connection',
+    tgw: 'A transit gateway',
+    vgw: 'A virtual private gateway',
+    cgw: 'A customer gateway',
+    vpn: 'A Site-to-Site VPN connection',
+    dx: 'A Direct Connect connection',
+    backup: 'An AWS Backup plan',
+    kinesis: 'A Kinesis data stream',
+    firehose: 'A Firehose stream',
+    athena: 'An Athena workgroup',
+    snow: 'A Snowball job',
+    datasync: 'A DataSync task',
+    dms: 'A DMS migration task',
   };
   return m[type];
 }
@@ -281,8 +415,10 @@ export function placeComponent(board0: Board, type: ServiceType, zone: Placement
     }
     for (const sid of subnetsOf(c)) findSubnet(board, sid)!.subnet.components.push(c.id);
   } else if (zone.kind === 'edge') board.edge.push(c.id);
-  else if (zone.kind === 'region') board.regions.find((r) => r.id === zone.refId)?.regionalServices.push(c.id) ?? board.regions[0].regionalServices.push(c.id);
+  else if (zone.kind === 'region') (board.regions.find((r) => r.id === zone.refId) ?? board.regions[0]).regionalServices.push(c.id);
   else if (zone.kind === 'vpcAttach') board.regions.flatMap((r) => r.vpcs).find((v) => v.id === zone.refId)?.attachments.push(c.id);
+  else if (zone.kind === 'onprem') board.onprem!.components.push(c.id);
+  if (c.placement.kind === 'region') c.placement.refId = (board.regions.find((r) => r.id === zone.refId) ?? board.regions[0]).id;
 
   board.components[c.id] = c;
 
@@ -312,7 +448,7 @@ function defaultNameFor(board: Board, type: ServiceType, zone: Placement): strin
 }
 
 function createSgFor(board: Board, c: Component, vpcId: string, defaults: Defaults): SecurityGroup {
-  const base: Record<string, string> = { alb: 'alb-sg', asg: 'app-sg', ec2: 'instance-sg', rds: 'db-sg' };
+  const base: Record<string, string> = { alb: 'alb-sg', asg: 'app-sg', ec2: 'instance-sg', rds: 'db-sg', aurora: 'db-sg' };
   const names = new Set(Object.values(board.securityGroups).map((s) => s.name));
   let name = base[c.type] ?? `${c.name}-sg`;
   for (let i = 2; names.has(name); i++) name = `${base[c.type]}-${i}`;
@@ -324,15 +460,19 @@ function createSgFor(board: Board, c: Component, vpcId: string, defaults: Defaul
     outbound: [{ protocol: 'all', fromPort: 0, toPort: 65535, source: { cidr: '0.0.0.0/0' }, description: 'Default: all outbound' }],
   };
   if (defaults === 'helpful') {
-    const find = (n: string) => Object.values(board.securityGroups).find((s) => s.name === n && s.vpcId === vpcId);
+    // The SG of the first component of a type in the same VPC (SG names get suffixes in later VPCs).
+    const find = (types: ServiceType[]) => {
+      const owner = Object.values(board.components).find((o) => types.includes(o.type) && o.securityGroupIds?.length && vpcOfComponent(board, o)?.id === vpcId);
+      return owner ? board.securityGroups[owner.securityGroupIds![0]] : undefined;
+    };
     if (c.type === 'alb') sg.inbound.push({ protocol: 'tcp', fromPort: 443, toPort: 443, source: { cidr: '0.0.0.0/0' }, description: 'HTTPS from anywhere' });
     if (c.type === 'asg' || c.type === 'ec2') {
-      const alb = find('alb-sg');
+      const alb = find(['alb']);
       if (alb) sg.inbound.push({ protocol: 'tcp', fromPort: 443, toPort: 443, source: { sg: alb.id }, description: 'HTTPS from the load balancer' });
     }
-    if (c.type === 'rds') {
-      const app = find('app-sg');
-      const port = (c.config as ConfigOf<'rds'>).port;
+    if (c.type === 'rds' || c.type === 'aurora') {
+      const app = find(['asg']);
+      const port = (c.config as ConfigOf<'rds'> | ConfigOf<'aurora'>).port;
       if (app) sg.inbound.push({ protocol: 'tcp', fromPort: port, toPort: port, source: { sg: app.id }, description: 'Database from the app tier' });
     }
   }
@@ -367,8 +507,19 @@ function autoWire(board: Board, placed: Component) {
     if (cfg.type === 'apigw' && !cfg.integration.targetId) cfg.integration.targetId = only([cfg.integration.kind]);
     if (cfg.type === 'lambda' && !cfg.eventSourceId && placed.type === 'sqs') cfg.eventSourceId = only(['sqs']);
     if (cfg.type === 's3' && cfg.policy === 'cloudfront-oac' && !cfg.policyDistributionId) cfg.policyDistributionId = only(['cloudfront']);
+    if (cfg.type === 'lambda' && !cfg.eventSourceId && placed.type === 'kinesis') cfg.eventSourceId = only(['kinesis']);
+    if (cfg.type === 'vpn' && !cfg.cgwId) cfg.cgwId = only(['cgw']);
+    if ((cfg.type === 'vpn' || cfg.type === 'dx') && !cfg.attachTo) cfg.attachTo = only(['vgw', 'tgw']);
+    if (cfg.type === 'firehose' && !cfg.destId) cfg.destId = only(['s3']);
+    if (cfg.type === 'firehose' && !cfg.sourceId && placed.type === 'kinesis') cfg.sourceId = only(['kinesis']);
+    if (cfg.type === 'athena' && !cfg.sourceId) cfg.sourceId = only(['s3']);
+    if ((cfg.type === 'snow' || cfg.type === 'datasync') && !cfg.destId) cfg.destId = only(['s3']);
+    if (cfg.type === 'dms' && !cfg.targetId) cfg.targetId = only(['rds', 'aurora']);
   }
 }
+
+/** Config fields that hold a component id (cleared when that component is deleted, resolved by name in the builder). */
+export const REF_FIELDS = ['targetId', 'originId', 'aliasTargetId', 'associatedId', 'eventSourceId', 'dlqId', 'policyDistributionId', 'replicaOf', 'globalPrimaryId', 'cgwId', 'attachTo', 'sourceId', 'destId'];
 
 export function removeComponent(board0: Board, id: ComponentId): OpResult {
   const c = board0.components[id];
@@ -395,11 +546,20 @@ export function removeComponent(board0: Board, id: ComponentId): OpResult {
       }
     }
   }
-  // Routes to a deleted NAT or IGW stay behind as blackholes, exactly like AWS.
+  board.onprem && (board.onprem.components = board.onprem.components.filter((x) => x !== id));
+  // Routes to a deleted NAT, IGW, peering connection or gateway stay behind as blackholes, exactly like AWS.
   for (const o of Object.values(board.components)) {
     const cfg = o.config as any;
-    for (const k of ['targetId', 'originId', 'aliasTargetId', 'associatedId', 'eventSourceId', 'dlqId', 'policyDistributionId']) if (cfg[k] === id) cfg[k] = null;
+    for (const k of REF_FIELDS) if (cfg[k] === id) cfg[k] = null;
     if (cfg.integration?.targetId === id) cfg.integration.targetId = null;
+    if (cfg.records) for (const r of cfg.records) if (r.targetId === id) r.targetId = null;
+    if (cfg.resourceIds) cfg.resourceIds = cfg.resourceIds.filter((x: string) => x !== id);
+    if (cfg.replication?.destId === id) cfg.replication = { ...cfg.replication, destId: null };
+    if (cfg.routeTables && o.type === 'tgw')
+      for (const rt of cfg.routeTables) {
+        rt.associations = rt.associations.filter((x: string) => x !== id);
+        rt.propagations = rt.propagations.filter((x: string) => x !== id);
+      }
   }
   return { ok: true, board };
 }
@@ -414,7 +574,7 @@ export function validateSubnets(board: Board, c: Component, subnets: string[]): 
     if (azs.size < 2) return 'At least two subnets in two different Availability Zones must be specified.';
     if (azs.size !== subnets.length) return 'A load balancer can be enabled in only one subnet per Availability Zone.';
   }
-  if (c.type === 'rds' && azs.size < 2)
+  if ((c.type === 'rds' || c.type === 'aurora') && azs.size < 2)
     return "DB Subnet Group doesn't meet Availability Zone (AZ) coverage requirement. Current AZ coverage: " +
       [...azs].join(', ') + '. Add subnets to cover at least 2 AZs.';
   if (subnets.length === 0) return 'Select at least one subnet.';
@@ -476,7 +636,130 @@ export function validateConfig(board: Board, c: Component, cfg: ServiceConfig): 
     const vpc = vpcOfComponent(board, c);
     for (const rtId of cfg.routeTableIds) if (!board.routeTables[rtId] || board.routeTables[rtId].vpcId !== vpc?.id) return 'A gateway endpoint can only be associated with route tables in its own VPC.';
   }
+  return validateStage3Config(board, c, cfg);
+}
+
+const S3_CLASS_ORDER: Record<string, number> = { STANDARD: 0, INTELLIGENT_TIERING: 1, STANDARD_IA: 2, ONEZONE_IA: 3, GLACIER_IR: 4, GLACIER: 5, DEEP_ARCHIVE: 6 };
+
+function validateStage3Config(board: Board, c: Component, cfg: ServiceConfig): string | null {
+  const comp = (id: string | null | undefined) => (id ? board.components[id] : undefined);
+  if (cfg.type === 'rds' && cfg.replicaOf) {
+    const src = comp(cfg.replicaOf);
+    if (!src || src.config.type !== 'rds') return 'A read replica source must be another RDS DB instance.';
+    if (src.id === c.id) return 'An instance cannot replicate from itself.';
+    if (src.config.backupRetentionDays === 0) return 'Automatic backups must be enabled on the source instance (retention ≥ 1 day) before you can create a read replica.';
+    if (src.config.engine !== cfg.engine) return 'A read replica uses the same engine as its source.';
+  }
+  if (cfg.type === 'aurora') {
+    if (cfg.backupRetentionDays < 1 || cfg.backupRetentionDays > 35) return 'Aurora backup retention must be between 1 and 35 days (Aurora backups cannot be turned off).';
+    if (cfg.readers < 0 || cfg.readers > 15) return 'An Aurora cluster can have up to 15 Aurora Replicas.';
+    if (cfg.serverlessV2 && (cfg.minAcu < 0 || cfg.maxAcu < cfg.minAcu || cfg.maxAcu > 256)) return 'Serverless v2 capacity: minimum ≥ 0 ACU, maximum ≥ minimum and ≤ 256 ACU.';
+    if (cfg.globalPrimaryId) {
+      const p = comp(cfg.globalPrimaryId);
+      if (!p || p.config.type !== 'aurora' || p.id === c.id) return 'The primary of an Aurora Global Database must be another Aurora cluster.';
+      if (regionOf(board, p) === regionOf(board, c)) return 'Each secondary cluster of an Aurora Global Database must be in a different Region from the primary.';
+      if (p.config.engine !== cfg.engine) return 'A global database secondary uses the same engine as its primary.';
+    }
+  }
+  if (cfg.type === 'dynamodb') {
+    const home = regionOf(board, c);
+    for (const r of cfg.replicaRegions ?? []) {
+      if (!board.regions.some((x) => x.id === r)) return `Region ${r} is not on the board.`;
+      if (r === home) return 'A global table replica must be in a different Region from the table.';
+    }
+  }
+  if (cfg.type === 's3') {
+    const lc = cfg.lifecycle ?? [];
+    let prev = { days: 0, rank: S3_CLASS_ORDER[cfg.storageClass ?? 'STANDARD'] };
+    for (const t of [...lc].sort((a, b) => a.afterDays - b.afterDays)) {
+      if (t.afterDays < 0) return 'Transition days must be zero or more.';
+      if ((t.toClass === 'STANDARD_IA' || t.toClass === 'ONEZONE_IA') && t.afterDays < 30)
+        return `'Days' in Transition action must be greater than or equal to 30 for storageClass '${t.toClass}'. Objects must stay at least 30 days in S3 Standard before moving to an IA class.`;
+      if (t.toClass === 'STANDARD' || S3_CLASS_ORDER[t.toClass] <= prev.rank) return `Lifecycle transitions only go "down the waterfall" (Standard → IA → Glacier → Deep Archive). ${t.toClass} can't follow the previous class.`;
+      if (t.afterDays <= prev.days && prev.days > 0) return 'Each transition must happen later than the previous one.';
+      prev = { days: t.afterDays, rank: S3_CLASS_ORDER[t.toClass] };
+    }
+    if (cfg.expireAfterDays != null) {
+      if (cfg.expireAfterDays < 1) return 'Expiration days must be a positive integer.';
+      if (lc.some((t) => t.afterDays >= cfg.expireAfterDays!)) return 'Objects must expire after their last transition.';
+    }
+    const lock = cfg.objectLock?.mode ?? 'none';
+    if (lock !== 'none' && !cfg.versioning) return 'Object Lock requires versioning, and once Object Lock is enabled versioning cannot be suspended.';
+    if (lock !== 'none' && (cfg.objectLock!.retentionDays < 1 || cfg.objectLock!.retentionDays > 36500)) return 'Default retention must be between 1 day and 100 years.';
+    if (cfg.mfaDelete && !cfg.versioning) return 'MFA Delete is a versioning setting: enable versioning first.';
+    const dest = comp(cfg.replication?.destId);
+    if (cfg.replication?.destId) {
+      if (!dest || dest.config.type !== 's3') return 'The replication destination must be another S3 bucket.';
+      if (dest.id === c.id) return 'A bucket cannot replicate to itself.';
+      if (!cfg.versioning || !dest.config.versioning) return 'Replication requires versioning on both the source and the destination bucket.';
+    }
+    const prevCfg = c.config.type === 's3' ? c.config : null;
+    if (prevCfg && prevCfg.versioning && !cfg.versioning && (prevCfg.objectLock?.mode ?? 'none') !== 'none') return 'Versioning cannot be suspended on a bucket with Object Lock enabled.';
+    // A destination bucket can't lose versioning while something replicates into it.
+    if (!cfg.versioning && Object.values(board.components).some((o) => o.config.type === 's3' && o.config.replication?.destId === c.id)) return 'This bucket is a replication destination: versioning must stay enabled.';
+  }
+  if (cfg.type === 'pcx') {
+    const own = vpcOfComponent(board, c);
+    if (cfg.peerVpcId) {
+      const peer = vpcById(board, cfg.peerVpcId);
+      if (!peer) return 'Unknown peer VPC.';
+      if (own && peer.id === own.id) return 'A VPC cannot be peered with itself.';
+      if (own && cidrsOverlap(own.cidr, peer.cidr)) return `VPC peering connection failed: the CIDR blocks overlap (${own.cidr} and ${peer.cidr}). You cannot peer VPCs with overlapping IPv4 CIDR blocks.`;
+      const dup = componentsOfType(board, 'pcx').find((o) => o.id !== c.id && own && pcxConnects(board, o, own.id, peer.id));
+      if (dup) return `${dup.name} already peers these two VPCs. Only one peering connection can exist between a pair of VPCs.`;
+    }
+  }
+  if (cfg.type === 'tgw') {
+    const home = regionOf(board, c);
+    const seen = new Set<string>();
+    for (const vid of cfg.vpcAttachments) {
+      const v = vpcById(board, vid);
+      if (!v) return `Unknown VPC ${vid}.`;
+      if (regionOfVpc(board, vid) !== home) return `${v.name ?? v.id} is in another Region. A transit gateway attaches VPCs in its own Region (use TGW peering between Regions).`;
+      if (accountOf(board, v) !== accountOf(board, c) && !cfg.ramShared) return `${v.name ?? v.id} belongs to account ${accountOf(board, v)}. Share the transit gateway with that account through AWS RAM before attaching its VPC.`;
+    }
+    for (const rt of cfg.routeTables) {
+      for (const a of rt.associations) {
+        if (seen.has(a)) return `An attachment can be associated with only one transit gateway route table (${a}).`;
+        seen.add(a);
+      }
+      for (const r of rt.routes) if (!isValidCidr(r.dest) || !isCanonicalCidr(r.dest)) return `"${r.dest}" is not a valid destination CIDR block.`;
+    }
+  }
+  if (cfg.type === 'vpn') {
+    if (cfg.cgwId && comp(cfg.cgwId)?.type !== 'cgw') return 'A VPN connection terminates on a customer gateway.';
+    if (cfg.attachTo && !['vgw', 'tgw'].includes(comp(cfg.attachTo)?.type ?? '')) return 'A Site-to-Site VPN attaches to a virtual private gateway or a transit gateway.';
+  }
+  if (cfg.type === 'dx') {
+    if (cfg.attachTo && !['vgw', 'tgw'].includes(comp(cfg.attachTo)?.type ?? '')) return 'A Direct Connect connection reaches a VPC through a virtual private gateway, or a transit gateway (via a Direct Connect gateway).';
+    if (cfg.encryption === 'macsec' && cfg.speedGbps < 10) return 'MACsec is supported on 10 Gbps and 100 Gbps (and faster) dedicated connections only.';
+  }
+  if (cfg.type === 'backup') {
+    if (cfg.frequencyHours < 1) return 'Backup frequency must be at least once an hour.';
+    if (cfg.retentionDays < 1) return 'Retention must be at least 1 day.';
+    if (cfg.copyRegion && !board.regions.some((r) => r.id === cfg.copyRegion)) return `Region ${cfg.copyRegion} is not on the board.`;
+    if (cfg.copyRegion && cfg.copyRegion === regionOf(board, c)) return 'A cross-Region copy needs a different Region.';
+  }
+  if (cfg.type === 'kinesis') {
+    if (cfg.mode === 'provisioned' && (cfg.shards < 1 || cfg.shards > 500)) return 'A provisioned stream needs between 1 and 500 shards (default shard quota).';
+    if (cfg.retentionHours < 24 || cfg.retentionHours > 8760) return 'Retention must be between 24 hours and 365 days (8,760 hours).';
+  }
+  if (cfg.type === 'firehose') {
+    if (cfg.bufferSec < 0 || cfg.bufferSec > 900) return 'Buffer interval must be between 0 and 900 seconds.';
+    if (cfg.bufferMb < 1 || cfg.bufferMb > 128) return 'Buffer size must be between 1 and 128 MiB.';
+    if (cfg.format === 'parquet' && cfg.bufferMb < 64) return 'Record format conversion requires a buffer size of at least 64 MiB.';
+    if (cfg.sourceId && comp(cfg.sourceId)?.type !== 'kinesis') return 'The source must be a Kinesis data stream (or none, for Direct PUT).';
+  }
+  if (cfg.type === 'snow' && (cfg.devices < 1 || cfg.devices > 20)) return 'Order between 1 and 20 devices per job.';
   return null;
+}
+
+/** Does this peering connection join the two VPCs (in either direction)? */
+export function pcxConnects(_board: Board, pcx: Component, a: string, b: string): boolean {
+  if (pcx.config.type !== 'pcx' || !pcx.config.peerVpcId) return false;
+  const req = pcx.placement.refId;
+  const acc = pcx.config.peerVpcId;
+  return (req === a && acc === b) || (req === b && acc === a);
 }
 
 export function updateConfig(board0: Board, id: ComponentId, patch: Partial<ServiceConfig>): OpResult {
@@ -513,7 +796,12 @@ export function validateSgRule(board: Board, sg: SecurityGroup, rule: SgRuleInpu
   if ('sg' in rule.source) {
     const ref = board.securityGroups[rule.source.sg];
     if (!ref) return `Security group ${rule.source.sg} does not exist.`;
-    if (ref.vpcId !== sg.vpcId) return `You can't reference ${ref.name}: it belongs to a different VPC and the VPCs are not peered.`;
+    if (ref.vpcId !== sg.vpcId) {
+      const peered = componentsOfType(board, 'pcx').some((p) => pcxConnects(board, p, ref.vpcId, sg.vpcId));
+      const sameRegion = regionOfVpc(board, ref.vpcId) === regionOfVpc(board, sg.vpcId);
+      if (!peered) return `You can't reference ${ref.name}: it belongs to a different VPC and the VPCs are not peered.`;
+      if (!sameRegion) return `You can't reference ${ref.name}: security group references don't work across an inter-Region peering connection. Use the peer VPC's CIDR instead.`;
+    }
   }
   if ('prefixList' in rule.source && !PREFIX_LISTS[rule.source.prefixList]) return `Prefix list ${rule.source.prefixList} does not exist.`;
   return null;
@@ -605,6 +893,12 @@ export function validateRoute(board: Board, rtId: string, route: Route): string 
   const tc = tid ? board.components[tid] : undefined;
   if (!tc || tc.type !== kind) return `The ${kind} target ${tid} does not exist.`;
   if (kind === 'vpce') return 'Gateway endpoint routes are added by associating the endpoint with this route table.';
+  if (kind === 'pcx') {
+    const cfg = tc.config as ConfigOf<'pcx'>;
+    if (!cfg.peerVpcId || (tc.placement.refId !== rt.vpcId && cfg.peerVpcId !== rt.vpcId)) return `${tc.name} does not involve this VPC, so it can't be a route target here.`;
+  }
+  if (kind === 'tgw' && !(tc.config as ConfigOf<'tgw'>).vpcAttachments.includes(rt.vpcId)) return `This VPC is not attached to ${tc.name}. Create a VPC attachment first.`;
+  if (kind === 'vgw' && tc.placement.refId !== rt.vpcId) return `${tc.name} is attached to another VPC.`;
   return null;
 }
 

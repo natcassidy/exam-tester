@@ -136,6 +136,9 @@ export function validTargets(board: Board, rt: RouteTable): { label: string; tar
       const s = c.placement.kind === 'subnet' ? findSubnet(board, c.placement.refId) : null;
       if (s && s.vpc.id === rt.vpcId) out.push({ label: `${c.name} (NAT gateway)`, target: { nat: c.id } });
     }
+    if (c.config.type === 'pcx' && c.config.peerVpcId && (c.placement.refId === rt.vpcId || c.config.peerVpcId === rt.vpcId)) out.push({ label: `${c.name} (peering connection)`, target: { pcx: c.id } });
+    if (c.config.type === 'tgw' && c.config.vpcAttachments.includes(rt.vpcId)) out.push({ label: `${c.name} (transit gateway)`, target: { tgw: c.id } });
+    if (c.type === 'vgw' && c.placement.refId === rt.vpcId) out.push({ label: `${c.name} (virtual private gateway)`, target: { vgw: c.id } });
   }
   return out;
 }

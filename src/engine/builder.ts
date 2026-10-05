@@ -45,7 +45,14 @@ export class BoardBuilder {
 
   place(type: ServiceType, where: string, opts: ops.PlaceOptions & { name: string }): this {
     const kind = ops.ZONE_FOR[type];
-    const zone: Placement = kind === 'subnet' ? { kind, refId: where } : kind === 'vpcAttach' ? { kind, refId: where } : { kind, refId: kind === 'region' ? this.board.regions[0].id : 'global' };
+    const zone: Placement =
+      kind === 'subnet' || kind === 'vpcAttach'
+        ? { kind, refId: where }
+        : kind === 'region'
+          ? { kind, refId: where || this.board.regions[0].id }
+          : kind === 'onprem'
+            ? { kind, refId: 'onprem' }
+            : { kind, refId: 'global' };
     const id = this.apply(ops.placeComponent(this.board, type, zone, this.defaults, opts))!;
     this.names[opts.name] = id;
     return this;
@@ -53,10 +60,20 @@ export class BoardBuilder {
 
   config(name: string, patch: Partial<ServiceConfig> | Record<string, unknown>): this {
     // Allow references by name for id-valued fields.
-    const p: Record<string, unknown> = { ...patch };
-    for (const k of ['targetId', 'originId', 'aliasTargetId', 'associatedId', 'eventSourceId', 'dlqId', 'policyDistributionId']) {
-      if (typeof p[k] === 'string' && this.names[p[k] as string]) p[k] = this.names[p[k] as string];
-    }
+    const p: Record<string, unknown> = ops.clone({ ...patch });
+    const n = (v: unknown) => (typeof v === 'string' && this.names[v] ? this.names[v] : v);
+    for (const k of ops.REF_FIELDS) p[k] = p[k] === undefined ? undefined : n(p[k]);
+    for (const k of Object.keys(p)) if (p[k] === undefined) delete p[k];
+    if (Array.isArray(p.resourceIds)) p.resourceIds = (p.resourceIds as string[]).map(n);
+    if (Array.isArray(p.records)) p.records = (p.records as Record<string, unknown>[]).map((r) => ({ ...r, targetId: n(r.targetId) }));
+    if (p.replication && typeof p.replication === 'object') p.replication = { ...(p.replication as object), destId: n((p.replication as { destId: unknown }).destId) };
+    if (Array.isArray(p.routeTables))
+      p.routeTables = (p.routeTables as { associations: string[]; propagations: string[]; routes: { dest: string; attachment: string }[] }[]).map((rt) => ({
+        ...rt,
+        associations: rt.associations.map(n),
+        propagations: rt.propagations.map(n),
+        routes: rt.routes.map((r) => ({ ...r, attachment: n(r.attachment) })),
+      }));
     if (p.integration && typeof (p.integration as any).targetId === 'string') {
       const t = (p.integration as any).targetId;
       p.integration = { ...(p.integration as object), targetId: this.names[t] ?? t };
@@ -94,10 +111,13 @@ export class BoardBuilder {
     return this;
   }
 
-  route(rtId: string, dest: string, target: RouteTarget | { natName: string } | { igwName: string }): this {
+  route(rtId: string, dest: string, target: RouteTarget | { natName: string } | { igwName: string } | { pcxName: string } | { tgwName: string } | { vgwName: string }): this {
     let t: RouteTarget = target as RouteTarget;
     if (typeof target === 'object' && 'natName' in target) t = { nat: this.id(target.natName) };
     if (typeof target === 'object' && 'igwName' in target) t = { igw: this.id(target.igwName) };
+    if (typeof target === 'object' && 'pcxName' in target) t = { pcx: this.id(target.pcxName) };
+    if (typeof target === 'object' && 'tgwName' in target) t = { tgw: this.id(target.tgwName) };
+    if (typeof target === 'object' && 'vgwName' in target) t = { vgw: this.id(target.vgwName) };
     const existing = this.board.routeTables[rtId]?.routes.find((r) => r.dest === dest);
     if (existing) this.apply(ops.setRouteTarget(this.board, rtId, dest, t));
     else this.apply(ops.addRoute(this.board, rtId, { dest, target: t }));
@@ -124,6 +144,12 @@ export class BoardBuilder {
 
   associate(subnetId: string, field: 'routeTableId' | 'naclId', value: string): this {
     this.apply(ops.associateSubnet(this.board, subnetId, field, value));
+    return this;
+  }
+
+  /** Mark a component as owned by another AWS account (Stage 3 accounts layer). */
+  account(name: string, accountId: string): this {
+    this.board.components[this.id(name)].accountId = accountId;
     return this;
   }
 

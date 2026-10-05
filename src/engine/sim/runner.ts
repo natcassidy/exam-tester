@@ -8,8 +8,31 @@ import { reachability } from './events/reachability';
 import { traffic } from './events/traffic';
 import { iamAccess } from './events/iamAccess';
 import { fleetHealth } from './events/fleetHealth';
+import { regionOutage } from './events/regionOutage';
+import { dataLoss } from './events/dataLoss';
+import { migration } from './events/migration';
+import { connectivity } from './events/connectivity';
+import { globalLatency } from './events/globalLatency';
+import { storageLifecycle } from './events/storageLifecycle';
+import { streamIngest } from './events/streamIngest';
 
-const HANDLERS: Record<EventKind, EventHandler> = { reachability, traffic, azOutage, audit, queueBehavior, bill, iamAccess, fleetHealth };
+const HANDLERS: Record<EventKind, EventHandler> = {
+  reachability,
+  traffic,
+  azOutage,
+  audit,
+  queueBehavior,
+  bill,
+  iamAccess,
+  fleetHealth,
+  regionOutage,
+  dataLoss,
+  migration,
+  connectivity,
+  globalLatency,
+  storageLifecycle,
+  streamIngest,
+};
 
 export function runEvent(board: Board, ev: EventSpec, ctx: SimContext): EventResult {
   try {
