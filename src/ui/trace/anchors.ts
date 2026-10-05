@@ -8,6 +8,15 @@ export function anchorSelector(board: Board, hop: Hop, prevSubnet: string | null
   if (kind === 'service') return '[data-node-id="svc"]';
   if (kind === 'component' || kind === 'nat' || kind === 'igw' || kind === 'vpce') return board.components[id] ? `[data-node-id="${id}"]` : null;
   if (kind === 'subnet') return `[data-subnet-id="${id}"]`;
+  // Permission checks light up the component that runs as the role, or the bucket the key protects.
+  if (kind === 'role') {
+    const c = Object.values(board.components).find((x) => x.roleId === id);
+    return c ? `[data-node-id="${c.id}"]` : null;
+  }
+  if (kind === 'key') {
+    const c = Object.values(board.components).find((x) => x.config.type === 's3' && x.config.kmsKeyId === id);
+    return c ? `[data-node-id="${c.id}"]` : null;
+  }
   if (kind === 'sg') {
     const owner = Object.values(board.components).find((c) => c.securityGroupIds?.includes(id));
     return owner ? `[data-node-id="${owner.id}"]` : null;

@@ -1,7 +1,9 @@
 import { DndContext, DragEndEvent, DragOverlay, DragStartEvent, KeyboardSensor, PointerSensor, TouchSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { useEffect, useState } from 'react';
 import type { ServiceType } from '../engine/model';
-import { useGame } from '../store/game';
+import { modeOf, useGame } from '../store/game';
+import { DiffMain } from './diff/DiffView';
+import { DiagnoseModal, IncidentBar, LogsModal } from './incident/IncidentBar';
 import { Board, parseZoneId } from './board/Board';
 import { Palette, PaletteOverlayItem } from './board/Palette';
 import { Console } from './console/Console';
@@ -32,6 +34,8 @@ export function App() {
   const isMobile = useIsMobile();
   const [briefOpen, setBriefOpen] = useState(false);
   const [dragType, setDragType] = useState<ServiceType | null>(null);
+  const mission = useGame((s) => s.mission());
+  const mode = modeOf(mission);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -44,6 +48,8 @@ export function App() {
       if (e.key !== 'Escape') return;
       const s = useGame.getState();
       if (s.manualOpen) return s.openManual(null);
+      if (s.logsOpen) return s.openLogs(false);
+      if (s.diagnoseOpen) return s.openDiagnose(false);
       if (s.questionsOpen) return s.openQuestions(false);
       if (s.placing) return s.setPlacing(null);
       if (s.traceOpen) return s.openTrace(false);
@@ -61,12 +67,17 @@ export function App() {
     place(type, parseZoneId(String(e.over.id)));
   };
 
-  const sheetOpen = isMobile && (!!selection || traceOpen || briefOpen);
+  const sheetOpen = mode !== 'diff' && isMobile && (!!selection || traceOpen || briefOpen);
 
   return (
     <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setDragType(null)}>
       <div className="app">
         <TopBar />
+        {mode === 'diff' ? (
+          <div className="main diff">
+            <DiffMain key={mission.id} isMobile={isMobile} />
+          </div>
+        ) : (
         <div className="main">
           {!isMobile && (
             <aside className="col left">
@@ -81,6 +92,7 @@ export function App() {
                 </button>
               </div>
             )}
+            {mode === 'incident' && <IncidentBar />}
             <Board />
           </main>
           {!isMobile && (
@@ -90,7 +102,8 @@ export function App() {
           )}
           {isMobile && <Palette tray />}
         </div>
-        <SimDrawer />
+        )}
+        {mode !== 'diff' && <SimDrawer />}
       </div>
       {sheetOpen && (
         <>
@@ -103,6 +116,8 @@ export function App() {
       )}
       <DragOverlay dropAnimation={null}>{dragType ? <PaletteOverlayItem type={dragType} /> : null}</DragOverlay>
       <Questions />
+      <LogsModal />
+      <DiagnoseModal />
       <FieldManual />
       <Toasts />
     </DndContext>

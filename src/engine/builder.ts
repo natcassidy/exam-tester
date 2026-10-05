@@ -2,7 +2,10 @@
 // so reference boards obey the same validation the player does. Throws on any AWS error.
 
 import type { Board, ComponentId, NaclRule, Placement, RouteTarget, ServiceConfig, ServiceType, SgRule, VpcLayout } from './model';
+import type { IamPrincipalDef, IamState, PolicyDocument } from './iam/types';
 import * as ops from './board';
+import * as iamOps from './iam/ops';
+import { iamOf } from './iam/access';
 
 export class BoardBuilder {
   board: Board;
@@ -103,6 +106,68 @@ export class BoardBuilder {
 
   removeRoute(rtId: string, dest: string): this {
     this.apply(ops.removeRoute(this.board, rtId, dest));
+    return this;
+  }
+
+  /** Remove SG rules matching a predicate. */
+  dropSgRules(component: string, direction: 'inbound' | 'outbound', match: (r: SgRule) => boolean): this {
+    const sg = this.board.securityGroups[this.sgOf(component)];
+    sg[direction] = sg[direction].filter((r) => !match(r));
+    return this;
+  }
+
+  /** A custom network ACL with a fixed id. New custom NACLs deny everything until rules are added. */
+  nacl(id: string, name: string, vpcId: string): this {
+    this.apply(ops.createNacl(this.board, vpcId, name, id));
+    return this;
+  }
+
+  associate(subnetId: string, field: 'routeTableId' | 'naclId', value: string): this {
+    this.apply(ops.associateSubnet(this.board, subnetId, field, value));
+    return this;
+  }
+
+  // ----- IAM -----
+
+  iam(patch: Partial<Pick<IamState, 'accountId' | 'orgId' | 'scps'>>): this {
+    this.board.iam = { ...iamOf(this.board), ...ops.clone(patch) };
+    return this;
+  }
+
+  /** Create a role or user; its id is `role-<name>` / `user-<name>`. */
+  role(def: Omit<IamPrincipalDef, 'id'>): this {
+    this.apply(iamOps.createRole(this.board, { ...def, id: `${def.kind}-${def.name}` }));
+    return this;
+  }
+
+  roleId(name: string): string {
+    const r = Object.values(iamOf(this.board).roles).find((x) => x.name === name);
+    if (!r) throw new Error(`No role named ${name}`);
+    return r.id;
+  }
+
+  rolePolicy(roleName: string, policyName: string, doc: PolicyDocument | null): this {
+    this.apply(iamOps.setRolePolicy(this.board, this.roleId(roleName), policyName, doc));
+    return this;
+  }
+
+  attachRole(component: string, roleName: string | null): this {
+    this.apply(iamOps.attachRole(this.board, this.id(component), roleName ? this.roleId(roleName) : null));
+    return this;
+  }
+
+  key(id: string, alias: string, policy: PolicyDocument): this {
+    this.apply(iamOps.createKey(this.board, { id, alias, policy }));
+    return this;
+  }
+
+  keyPolicy(id: string, policy: PolicyDocument): this {
+    this.apply(iamOps.setKeyPolicy(this.board, id, policy));
+    return this;
+  }
+
+  resourcePolicy(component: string, doc: PolicyDocument | null): this {
+    this.apply(iamOps.setResourcePolicy(this.board, this.id(component), doc));
     return this;
   }
 

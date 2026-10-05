@@ -195,7 +195,7 @@ interface Hop {
    - Missing route: drop, with the explanation "No route to 52.x.x.x in rtb-private".
 3. **Arriving at the destination:** destination subnet NACL inbound, then destination SG inbound. SG sources match by CIDR or by SG membership of the sender's ENI.
 4. **Return traffic:** SGs are stateful, so return traffic is automatically allowed (shown as an `info` hop). NACLs are stateless, so the destination NACL outbound and the source NACL inbound must allow **ephemeral ports 1024–65535** back to the sender. This is where the classic NACL bug becomes visible.
-5. **Load balancers are two connections.** The client-to-ALB leg checks the listener and the ALB's SG. The ALB-to-target leg is a new flow from the ALB's ENI in that AZ, needs a healthy target, and needs the target SG to allow the ALB SG.
+5. **Load balancers are two connections.** The client-to-ALB leg checks the listener and the ALB's SG. The ALB-to-target leg is a new flow from the ALB's ENI in that AZ, needs a healthy target, and needs the target SG to allow the ALB SG. *(Refined in Stage 2.)* When **every** target is unhealthy, the ALB **fails open** and routes to all of them, as AWS does; the trace shows this as an info hop instead of a 503. A 503 from target health only happens while some targets are healthy and the rest are churning (see `fleetHealth`).
 6. **Failed AZs:** components in a downed AZ are unreachable. The trace picks a surviving path if one exists.
 
 **Trace UI:**
@@ -223,7 +223,8 @@ Event kinds are generic and parameterised, so missions are mostly configuration:
 | `audit` | rule IDs | Runs reusable checks: `dbNotPublic`, `noSshFromWorld`, `s3BlockPublicAccess`, `encryptionAtRest`, `appTierPrivate`, `wafOnPublicEntry`... |
 | `queueBehavior` | processingTimeSec, failureRate, arrivals | SQS semantics: visibility timeout shorter than processing time causes duplicates; no DLQ means poison messages loop forever; FIFO ordering and throughput. |
 | `bill` | usage profile | Cost estimate (2.10) against the budget, with line items. |
-| `iamAccess` (Stage 2) | principal, action, resource, expect | Runs the IAM evaluator and shows its trace. |
+| `iamAccess` (Stage 2) | principal (role, user, component or `service:<principal>`), action, resource (component, KMS key or role), objectKey?, context?, expect | Runs the network leg for VPC callers, then the IAM evaluator (including the chained KMS call for SSE-KMS objects), and shows every step as trace hops. |
+| `fleetHealth` (Stage 2) | entry, loadRps, durationMin, crashed?, appBootSec, SLO | Minute-by-minute target health: EC2 vs. ELB health check type, grace period, replacement churn and "zombie" instances whose app has crashed. Passes when the error rate meets the SLO and the fleet ends at desired capacity. |
 | `regionOutage`, `dataLoss`, `migration`, `connectivity` (Stage 3) | see Stage 3 | |
 | `custom` | check function | Escape hatch. Use sparingly. |
 
@@ -260,7 +261,7 @@ interface Mission {
   requirements: { id: string; text: string; target?: { rtoSec?: number; rpoSec?: number; budget?: number; p95Ms?: number } }[];
   budget: number; usage: UsageProfile; defaults: 'helpful'|'bare';
   layout: VpcLayout;              // CIDRs, AZs, subnets, starting route tables/NACLs
-  startingBoard?: Partial<Board>; // incidents/refactors start from a prebuilt board
+  startingBoard?: Board;          // incidents/refactors start from a full prebuilt board (built with BoardBuilder, so it is validated)
   palette?: ServiceType[];        // restrict available services if needed
   events: EventSpec[];
   questions: QuestionId[];        // transfer questions shown after the run
@@ -269,6 +270,7 @@ interface Mission {
   mistakes: { name: string; board: Board; expectFail: string[] }[]; // common wrong designs + which events must catch them
   keywords: string[];             // exam signal phrases ("least operational overhead" → serverless)
   incident?: IncidentSpec;        // Stage 2
+  diff?: DiffSpec;                // Stage 2
 }
 ```
 
@@ -277,6 +279,8 @@ interface Mission {
 2. The empty board fails every event except ones explicitly marked otherwise.
 3. Each entry in `mistakes` fails exactly the events listed in `expectFail`.
 4. Every concept and question ID referenced exists.
+
+Checks 2 and 3 apply to build missions. Incidents and Spot the Difference rounds have their own suites (`incidents.test.ts`, `diffs.test.ts`, see Stage 2).
 
 This harness is what keeps scenario quality high as content grows. Write it in Stage 1.
 
@@ -307,7 +311,7 @@ interface Question {
 }
 ```
 
-After each mission, show 3–5 transfer questions, one at a time. After each answer, reveal every option's explanation and link to the Field Manual. Transfer questions must use a different story from the mission they follow.
+After each mission, show 3–5 transfer questions (2–3 after a Spot the Difference round, which is already a question), one at a time. After each answer, reveal every option's explanation and link to the Field Manual. Transfer questions must use a different story from the mission they follow.
 
 ### 2.12 Persistence
 
@@ -317,6 +321,10 @@ One persisted store with a `schemaVersion` and migration functions. It holds:
 - Question history
 - Concept evidence (Stage 4)
 - Settings
+- Incident progress per mission: investigation actions taken, diagnosis, when it was verified (Stage 2, schema v2)
+- Spot the Difference answers (Stage 2, schema v2)
+
+Every schema bump ships a migration and a test that an older export imports without losing boards or scores.
 
 Export and import of the whole store go through a JSON file (download via Blob, upload via file input). Wrap all storage access in try/catch, so the app still works if storage is unavailable.
 
@@ -367,33 +375,36 @@ Export and import of the whole store go through a JSON file (download via Blob, 
 **Goal:** diagnosis skills. Learn to find out *why* something fails, especially in networking and permissions.
 
 ### Build
+0. **Mode tabs** in the top bar: Build · Incidents · Spot the Difference, each with its own mission chips.
 1. **Incident mode.** The mission starts from a prebuilt, broken board. The board shows the symptom as an alert banner (for example "ALB returning 502 · target group 0/4 healthy").
-   - **Investigation budget** (for example, 8 actions). Each of these costs one action: opening a Console panel, running an ad-hoc trace, viewing logs.
+   - **Investigation budget** (for example, 8 actions) with a **par** (the number of actions a good investigator needs). Each of these costs one action, **the first time only**: opening an object in the console (component, SG, NACL, route table, subnet, role, key, SCPs), running a distinct ad-hoc trace or API-call simulation, reading a log source. Re-opening is free, and so is the IAM overview (it is a directory, not evidence). Going over budget is allowed but scores 0 for investigation.
    - **Logs view:** canned but realistic log lines per incident (ALB access logs with status codes, VPC Flow Log lines with ACCEPT/REJECT, CloudTrail AccessDenied events, CloudWatch metrics).
-   - **Diagnose:** the player points at the root cause by selecting the exact rule or setting, then applies a fix.
-   - **Scoring:** correct root cause (50%), fix resolves the symptom when the sim reruns (30%), actions used (10%), no collateral changes (10%, based on a diff against the starting board: changes that weren't needed are flagged, including things like "you opened port 22 to the world").
+   - **Diagnose:** the player points at the root cause by picking the exact rule set or setting from a suspect list built from the starting board (every SG and NACL direction, every route, subnet associations, diagnosable service settings, resource policies, attached roles, role policies, boundaries, trust policies, key policies, SCPs), then applies a fix. "Run simulation" becomes **Verify fix** and needs a diagnosis; the diagnosis locks at the first verify, so the report can't be used to guess.
+   - **Suspects and changes share one key format** (`nacl:<id>:outbound`, `route:<rt>:<dest>`, `config:<component>:<field>`, `policy:<role>`, `keypolicy:<key>`, ...), so the diagnosis, the board diff and each incident's `allowedChanges` all line up.
+   - **Scoring:** correct root cause 50; fix 30 when every event passes (15 when only the symptom events pass and something else broke); investigation 10 at or under par, falling linearly to 0 at the budget; collateral 10, minus 5 per change outside `allowedChanges`, and 0 if any change is dangerous (for example "you opened port 22 to the world"). Investigation and collateral points only count once the symptom is fixed, so changing nothing can't score 20. Stars: ≥ 90 → 3, ≥ 70 → 2, ≥ 40 → 1. The report shows each part with the root cause explained.
 2. **IAM model and evaluator** (`engine/iam/`):
    - Components get an attached **role** (EC2 instance profile, Lambda execution role). Some incidents also include a developer user.
-   - Policies are JSON with this subset: `Effect`, `Action` / `NotAction` with wildcards, `Resource` with ARN wildcards, `Principal` (resource policies), and `Condition` with `StringEquals`, `StringLike`, `Bool` (`aws:SecureTransport`, `aws:MultiFactorAuthPresent`), `IpAddress` (`aws:SourceIp`), `aws:SourceVpce`, `aws:PrincipalOrgID`.
+   - Policies are JSON with this subset: `Effect`, `Action` / `NotAction` with wildcards, `Resource` / `NotResource` with ARN wildcards (matched per ARN section), `Principal` (resource and trust policies; `NotPrincipal` is rejected), and `Condition` with `StringEquals`, `StringNotEquals`, `StringLike`, `StringNotLike`, `Bool`, `IpAddress`, `NotIpAddress`, `ArnEquals`, `ArnNotEquals`, `ArnLike`, `ArnNotLike`, plus the `...IfExists` suffix. Keys: `aws:SecureTransport`, `aws:MultiFactorAuthPresent`, `aws:SourceIp`, `aws:SourceVpce`, `aws:SourceVpc`, `aws:PrincipalOrgID`, `aws:PrincipalArn`, `aws:PrincipalAccount`, `aws:SourceArn`, `aws:SourceAccount`, `kms:ViaService`, `s3:x-amz-server-side-encryption`. Key names match case-insensitively; a missing key makes positive operators false and negated ones true, as in AWS. *(Refined: the negated and ARN operators and `aws:PrincipalArn` were added because the classic "deny unless from the VPC endpoint, except for the ops role" fix needs them.)*
    - **Evaluation order** (show every step in a trace like the packet tracer):
      1. An explicit deny in any applicable policy → **deny**.
      2. If the account is in an organization, SCPs must allow the action.
-     3. Resource-based policy allow. In the same account, this can grant access on its own; cross-account access needs both the identity policy and the resource policy.
-     4. A permissions boundary, if present, must allow.
-     5. Identity policy allow.
-     6. Otherwise → **implicit deny**.
-   - **KMS:** the key policy must allow the principal, or delegate to IAM by allowing the account root. S3 objects with SSE-KMS need `kms:Decrypt` (to read) and `kms:GenerateDataKey` (to write).
+     3. A **VPC endpoint policy**, when the request travels through a gateway endpoint, must allow it. *(Added in Stage 2: endpoint policies are exam material and an incident lever.)*
+     4. Resource-based policy allow. In the same account, it grants on its own when it names the principal itself; naming the account (root) only delegates to IAM. Cross-account access needs both the identity policy and the resource policy. KMS key policies and role trust policies are mandatory: without them nothing else counts.
+     5. A permissions boundary, if present, must allow.
+     6. Identity policy allow.
+     7. Otherwise → **implicit deny**.
+   - **KMS:** the key policy must allow the principal, or delegate to IAM by allowing the account root. S3 objects with SSE-KMS need `kms:Decrypt` (to read) and `kms:GenerateDataKey` (to write), evaluated as a second, chained call. The AWS managed key `aws/s3` is always usable by principals in the account.
    - Role assumption: trust policy + caller permission for `sts:AssumeRole`. Implement it in the evaluator now; Stage 3 missions use it.
-   - **Policy editor:** CodeMirror JSON with validation, attached to roles and to S3, SQS and KMS resource policies.
-   - New event kind `iamAccess`. Traces gain an `iam` hop, so one end-to-end trace shows both "can the packet get there" and "is the call allowed."
-3. **Spot the Difference mode:** two read-only boards side by side, nearly identical. Both run the same event; one survives. The player picks the cause (multiple choice built from real config differences), then sees the explanation and both traces.
-4. **Field Manual additions:** about 15 entries covering IAM evaluation logic, resource vs. identity policies, KMS key policies, SG vs. NACL, VPC Flow Logs, ALB health checks and error codes (502 / 503 / 504), ASG health check types, SQS visibility timeout and DLQ.
-5. **Questions:** 30 more (50 total).
+   - **Policy editor:** CodeMirror JSON with validation (JSON syntax inline, policy grammar errors worded like AWS's `MalformedPolicyDocument`), attached to role policies, boundaries and trust policies, and to S3 bucket, SQS queue, KMS key and gateway endpoint policies. SCPs are shown read-only (they belong to the organization's management account). An **IAM** button opens roles, users, keys and SCPs; components that run code get a Permissions tab to attach a role.
+   - New event kind `iamAccess`. Traces gain an `iam` hop, so one end-to-end trace shows both "can the packet get there" and "is the call allowed." The tracer gets an **API call** mode (caller, action, resource, object key) next to the network mode, and each `iam` hop expands into the step-by-step evaluation.
+3. **Spot the Difference mode:** two read-only boards side by side, nearly identical. Both run the same event; one survives. The player picks the cause (multiple choice built from real config differences), then sees the explanation and both results. Each option lists the board-diff keys it describes, and a test checks the options cover exactly the real differences, so no option can be made up. Clicking any object opens a side-by-side inspector that highlights differing settings. The first answer counts: correct → 3 stars, wrong → 1.
+4. **Field Manual additions:** 15 entries: IAM policy evaluation, resource vs. identity policies, IAM roles, condition keys, permissions boundaries, SCPs, KMS key policies, VPC endpoint policies, SG vs. NACL, VPC Flow Logs, CloudTrail, ALB error codes (502 / 503 / 504), ASG health checks, blackhole routes, CloudWatch metrics. (SQS visibility timeout and DLQ already exist from Stage 1.)
+5. **Questions:** 32 more (52 total): 3 per incident, 2 per Spot the Difference round.
 
 ### Incidents (8)
 1. **The packet that never came back:** NACL on the app subnet allows inbound 443 but has no outbound rule for ephemeral ports 1024–65535.
 2. **Patch Tuesday, again:** private route table's 0.0.0.0/0 points at a NAT gateway that was deleted (blackhole route).
-3. **0/4 healthy:** ALB health check path is `/health`, but the app serves `/healthz`. Symptom: 503s.
+3. **0/4 healthy:** ALB health check path is `/health`, but the app serves `/healthz`. *(Refined.)* Because an ALB fails open when every target is unhealthy, the symptom is not a clean outage: with ELB health checks on the ASG, instances are replaced as soon as their grace period ends, so the fleet churns and users see intermittent 503s (checked with `fleetHealth`).
 4. **The wrong door:** DB SG allows 3306 from the *ALB's* SG instead of the app SG.
 5. **AccessDenied at 2 a.m.:** Lambda role allows `dynamodb:GetItem` but the code calls `PutItem`. CloudTrail shows the denied call.
 6. **The key that wouldn't turn:** EC2 role has full S3 access, but the bucket uses SSE-KMS with a customer-managed key whose key policy doesn't include the role.
@@ -410,6 +421,8 @@ Export and import of the whole store go through a JSON file (download via Blob, 
 - IAM evaluator unit tests: explicit deny overrides allow; same-account resource policy grants alone; cross-account needs both sides; SCP restricts even an admin; permissions boundary caps the identity policy; KMS key policy is required; condition keys work.
 - Each incident has tests: the starting board fails with the stated symptom; the reference fix passes; at least one plausible wrong fix fails (for example, opening the NACL fully "works" but is flagged as collateral).
 - The logs view and the investigation budget work on mobile.
+- Each incident also checks: the root cause is in the suspect list, a perfect run scores 100, and changing nothing scores only the 50 diagnosis points.
+- Each Spot the Difference round checks: the survivor passes and the other side fails the event, and the options' change keys equal the board diff.
 
 ---
 

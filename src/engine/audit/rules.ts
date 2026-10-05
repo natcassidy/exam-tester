@@ -115,6 +115,38 @@ export const AUDIT_RULES: Record<string, AuditRule> = {
       return { status: 'pass', message: 'App and data tiers only accept traffic from the security group in front of them.', highlight: [] };
     },
   },
+  dbSgLeastPrivilege: {
+    id: 'dbSgLeastPrivilege',
+    title: 'Only the app tier can reach the database',
+    concept: 'sg-chaining',
+    check: (b) => {
+      const dbs = componentsOfType(b, 'rds');
+      if (!dbs.length) return na('No RDS database on the board.');
+      const appSgs = new Set(Object.values(b.components).filter((c) => ['asg', 'ec2', 'lambda'].includes(c.type)).flatMap((c) => c.securityGroupIds ?? []));
+      for (const db of dbs)
+        for (const sgId of db.securityGroupIds ?? []) {
+          const sg = b.securityGroups[sgId];
+          for (const r of sg?.inbound ?? []) {
+            if ('sg' in r.source && appSgs.has(r.source.sg)) continue;
+            const src = 'cidr' in r.source ? r.source.cidr : 'sg' in r.source ? b.securityGroups[r.source.sg]?.name ?? r.source.sg : r.source.prefixList;
+            return { status: 'fail', message: `${sg.name} (on ${db.name}) accepts traffic from ${src}. A database should only accept the app tier's security group: a CIDR or the load balancer's SG lets more than the app in.`, highlight: [db.id], fixTarget: sg.id };
+          }
+        }
+      return { status: 'pass', message: 'Database security groups only reference the app tier security group.', highlight: [] };
+    },
+  },
+  s3CustomerManagedKey: {
+    id: 's3CustomerManagedKey',
+    title: 'Regulated buckets use the customer managed KMS key',
+    concept: 'kms-key-policies',
+    check: (b) => {
+      const buckets = componentsOfType(b, 's3');
+      if (!buckets.length) return na('No S3 bucket on the board.');
+      const off = buckets.find((x) => x.config.encryption !== 'SSE-KMS' || !x.config.kmsKeyId);
+      if (off) return { status: 'fail', message: `${off.name} is not encrypted with the customer managed key. The compliance rule needs a key the company controls (key policy, rotation, CloudTrail record of every use); SSE-S3 or the AWS managed key don't give that.`, highlight: [off.id], fixTarget: off.id };
+      return { status: 'pass', message: 'Every bucket uses SSE-KMS with a customer managed key.', highlight: [] };
+    },
+  },
   wafOnPublicEntry: {
     id: 'wafOnPublicEntry',
     title: 'Public entry points are protected by AWS WAF',

@@ -18,6 +18,17 @@ export function Brief() {
       </div>
       <div className="panel-body brief">
         <p>“{mission.brief}”</p>
+        {mission.incident && (
+          <div className="section">
+            <h4>How incidents work</h4>
+            <ol className="hint" style={{ paddingLeft: 18, margin: 0 }}>
+              <li>Investigate: read logs, open objects, run traces. Each new thing you look at costs one action (par {mission.incident.par}, budget {mission.incident.budget}).</li>
+              <li>Diagnose: name the one setting that caused the alert.</li>
+              <li>Fix it with the smallest change, then Verify fix.</li>
+            </ol>
+            <p className="hint">Score: root cause 50 · fix 30 · investigation 10 · no collateral changes 10.</p>
+          </div>
+        )}
         <div className="section">
           <h4>Requirements</h4>
           {mission.requirements.map((r) => {
@@ -30,6 +41,7 @@ export function Brief() {
             );
           })}
         </div>
+        {!mission.incident && (
         <div className="section">
           <h4>Mission setup</h4>
           <p className="hint">
@@ -40,6 +52,7 @@ export function Brief() {
             Budget ≈ ${mission.budget.toLocaleString()}/month (approximate prices, us-east-1).
           </p>
         </div>
+        )}
         <div className="section">
           <h4>Exam signal phrases</h4>
           <ul className="hint">
@@ -48,8 +61,8 @@ export function Brief() {
             ))}
           </ul>
         </div>
-        <button className="btn small ghost danger" onClick={() => confirm('Reset this mission\'s board?') && resetBoard()}>
-          Reset board
+        <button className="btn small ghost danger" onClick={() => confirm(mission.incident ? 'Restart this incident? Your board, actions and diagnosis are cleared (your best score is kept).' : "Reset this mission's board?") && resetBoard()}>
+          {mission.incident ? 'Restart incident' : 'Reset board'}
         </button>
       </div>
     </>

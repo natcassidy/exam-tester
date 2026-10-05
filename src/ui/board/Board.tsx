@@ -8,6 +8,7 @@ import { useGame } from '../../store/game';
 import { Abbr } from '../shell/Abbr';
 import { nodeSubtitle } from './describe';
 import { TraceOverlay } from '../trace/TraceOverlay';
+import { useBoardView } from './context';
 
 export function zoneId(z: Placement): string {
   return `${z.kind}:${z.refId}`;
@@ -24,11 +25,13 @@ function useDragType(): ServiceType | null {
 }
 
 function Zone({ zone, className, children, label }: { zone: Placement; className?: string; children: ReactNode; label: string }) {
-  const board = useGame((s) => s.board());
-  const placing = useGame((s) => s.placing);
+  const { board, readOnly, idPrefix } = useBoardView();
+  const placing0 = useGame((s) => s.placing);
   const place = useGame((s) => s.place);
-  const dragType = useDragType();
-  const { setNodeRef, isOver } = useDroppable({ id: zoneId(zone) });
+  const dragType0 = useDragType();
+  const { setNodeRef, isOver } = useDroppable({ id: idPrefix + zoneId(zone), disabled: readOnly });
+  const placing = readOnly ? null : placing0;
+  const dragType = readOnly ? null : dragType0;
   const pending = dragType ?? placing;
   const valid = pending ? validatePlacement(board, pending, zone) === null : false;
   const cls = [className, pending && valid ? 'drop-ok' : '', isOver && valid ? 'drop-over' : '', placing ? 'tappable' : ''].filter(Boolean).join(' ');
@@ -49,16 +52,16 @@ function Zone({ zone, className, children, label }: { zone: Placement; className
 }
 
 function Node({ c, span }: { c: Component; span?: string }) {
-  const board = useGame((s) => s.board());
-  const selection = useGame((s) => s.selection);
-  const highlight = useGame((s) => s.highlight);
-  const select = useGame((s) => s.select);
-  const placing = useGame((s) => s.placing);
+  const { board, selection, select, readOnly } = useBoardView();
+  const highlight0 = useGame((s) => s.highlight);
+  const placing0 = useGame((s) => s.placing);
+  const highlight = readOnly ? [] : highlight0;
+  const placing = readOnly ? null : placing0;
   const selected = selection?.kind === 'component' && selection.id === c.id;
   return (
     <button
       className={`node ${selected ? 'selected' : ''} ${highlight.includes(c.id) ? 'bad' : ''}`}
-      data-node-id={c.id}
+      data-node-id={readOnly ? undefined : c.id}
       onClick={(e) => {
         if (placing) return;
         e.stopPropagation();
@@ -77,22 +80,21 @@ function Node({ c, span }: { c: Component; span?: string }) {
 }
 
 function SubnetCell({ s, col, children }: { s: Subnet; col: number; children: ReactNode }) {
-  const board = useGame((st) => st.board());
-  const selection = useGame((st) => st.selection);
-  const select = useGame((st) => st.select);
-  const placing = useGame((st) => st.placing);
+  const { board, selection, select, readOnly } = useBoardView();
+  const placing0 = useGame((st) => st.placing);
+  const placing = readOnly ? null : placing0;
   const status = subnetPublicStatus(board, s);
   const selected = selection?.kind === 'subnet' && selection.id === s.id;
   return (
     <div style={{ gridColumn: col, gridRow: '1 / 3', display: 'flex' }}>
       <Zone zone={{ kind: 'subnet', refId: s.id }} className={`subnet ${status.isPublic ? 'public' : ''} ${selected ? 'selected' : ''}`} label={`Subnet ${s.name}`}>
-        <div data-subnet-id={s.id} style={{ width: '100%' }}>
+        <div data-subnet-id={readOnly ? undefined : s.id} style={{ width: '100%' }}>
           <button
             className="subnet-head"
             onClick={(e) => {
               if (placing) return;
               e.stopPropagation();
-              select({ kind: 'subnet', id: s.id }, 'networking');
+              select({ kind: 'subnet', id: s.id });
             }}
             title={status.reason}
           >
@@ -184,15 +186,15 @@ function VpcView({ board, vpc }: { board: BoardT; vpc: Vpc }) {
 }
 
 export function Board() {
-  const board = useGame((s) => s.board());
-  const placing = useGame((s) => s.placing);
+  const { board, select, readOnly } = useBoardView();
+  const placing0 = useGame((s) => s.placing);
+  const placing = readOnly ? null : placing0;
   const setPlacing = useGame((s) => s.setPlacing);
-  const select = useGame((s) => s.select);
   const region = board.regions[0];
   const edge = board.edge.map((id) => board.components[id]).filter(Boolean);
   const regional = region.regionalServices.map((id) => board.components[id]).filter(Boolean);
   return (
-    <div className={`board ${placing ? 'placing-mode' : ''}`} onClick={() => !placing && select(null)}>
+    <div className={`board ${placing ? 'placing-mode' : ''} ${readOnly ? 'read-only' : ''}`} onClick={() => !placing && select(null)}>
       {placing && (
         <div className="placing-banner" onClick={(e) => e.stopPropagation()}>
           <span>
@@ -203,7 +205,7 @@ export function Board() {
           </button>
         </div>
       )}
-      <div className="internet-anchor" data-node-id="internet">
+      <div className="internet-anchor" data-node-id={readOnly ? undefined : 'internet'}>
         <span className="dot" /> Internet (users, attackers, patch servers)
       </div>
       <Zone zone={{ kind: 'edge', refId: 'global' }} className="zone" label="Global edge">
@@ -221,7 +223,7 @@ export function Board() {
           </span>
         </div>
         <Zone zone={{ kind: 'region', refId: region.id }} className="zone" label="Regional services">
-          <div className="zone-head" data-node-id="svc">
+          <div className="zone-head" data-node-id={readOnly ? undefined : 'svc'}>
             <h4>Regional services</h4>
             <span className="hint">S3 · SQS · Lambda · API Gateway · DynamoDB</span>
           </div>
@@ -233,7 +235,7 @@ export function Board() {
           </div>
         ))}
       </div>
-      <TraceOverlay />
+      {!readOnly && <TraceOverlay />}
     </div>
   );
 }

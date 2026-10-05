@@ -30,6 +30,22 @@ export const CONCEPTS: Concept[] = [
   { id: 'vpc-gateway-endpoints', title: 'VPC gateway endpoints', domain: 'cost', task: '4.4' },
   { id: 'nat-data-processing', title: 'NAT gateway data processing charges', domain: 'cost', task: '4.4' },
   { id: 'data-transfer-costs', title: 'Data transfer pricing', domain: 'cost', task: '4.4' },
+  // Stage 2: investigation, IAM and troubleshooting.
+  { id: 'iam-policy-evaluation', title: 'IAM policy evaluation logic', domain: 'secure', task: '1.1' },
+  { id: 'resource-vs-identity-policies', title: 'Identity-based vs. resource-based policies', domain: 'secure', task: '1.1' },
+  { id: 'iam-roles', title: 'IAM roles, instance profiles and AssumeRole', domain: 'secure', task: '1.1' },
+  { id: 'iam-condition-keys', title: 'IAM condition keys', domain: 'secure', task: '1.1' },
+  { id: 'permissions-boundaries', title: 'Permissions boundaries', domain: 'secure', task: '1.1' },
+  { id: 'scps', title: 'Service control policies (SCPs)', domain: 'secure', task: '1.1' },
+  { id: 'kms-key-policies', title: 'KMS key policies', domain: 'secure', task: '1.3' },
+  { id: 'vpc-endpoint-policies', title: 'VPC endpoint policies and aws:SourceVpce', domain: 'secure', task: '1.2' },
+  { id: 'sg-vs-nacl', title: 'Security groups vs. network ACLs', domain: 'secure', task: '1.2' },
+  { id: 'vpc-flow-logs', title: 'VPC Flow Logs', domain: 'secure', task: '1.2' },
+  { id: 'cloudtrail', title: 'AWS CloudTrail', domain: 'secure', task: '1.1' },
+  { id: 'alb-error-codes', title: 'ALB error codes (502 / 503 / 504)', domain: 'resilient', task: '2.2' },
+  { id: 'asg-health-checks', title: 'Auto Scaling health checks', domain: 'resilient', task: '2.2' },
+  { id: 'route-blackholes', title: 'Route tables and blackhole routes', domain: 'resilient', task: '2.2' },
+  { id: 'cloudwatch-metrics', title: 'CloudWatch metrics for troubleshooting', domain: 'resilient', task: '2.2' },
 ];
 
 export const CONCEPT_BY_ID: Record<string, Concept> = Object.fromEntries(CONCEPTS.map((c) => [c.id, c]));

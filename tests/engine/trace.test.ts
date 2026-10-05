@@ -104,11 +104,13 @@ describe('trace through an ALB', () => {
     expect(failingHop(t)?.check).toBe('lb-listener');
   });
 
-  it('health check path mismatch leaves 0 healthy targets (503)', () => {
+  it('health check path mismatch leaves 0 healthy targets, and the ALB fails open', () => {
     const b = BoardBuilder.from(ledgerly.reference).config('web-alb', { healthCheck: { path: '/healthz', intervalSec: 30, timeoutSec: 5, healthyThreshold: 5, unhealthyThreshold: 2 } }).done();
     const t = traceFlow(b, { from: 'internet', to: id(b, 'web-alb'), protocol: 'tcp', port: 443 });
-    expect(failingHop(t)?.check).toBe('lb-target-health');
-    expect(failingHop(t)?.explain).toMatch(/503/);
+    expect(t.result).toBe('delivered');
+    const h = t.hops.find((x) => x.check === 'lb-target-health')!;
+    expect(h.result).toBe('info');
+    expect(h.explain).toMatch(/0\/\d+ healthy.*fails open/);
   });
 
   it('target SG must allow the ALB SG', () => {

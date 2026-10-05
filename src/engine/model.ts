@@ -1,5 +1,7 @@
 // Core types for the Blast Radius engine. Pure TypeScript: no React or DOM imports.
 
+import type { IamDecision, IamState, PolicyDocument } from './iam/types';
+
 export type ComponentId = string;
 export type ConceptId = string;
 export type QuestionId = string;
@@ -41,6 +43,8 @@ export interface Board {
   routeTables: Record<string, RouteTable>;
   securityGroups: Record<string, SecurityGroup>;
   nacls: Record<string, Nacl>;
+  /** Roles, users, KMS keys and SCPs (Stage 2). Absent on older saves. */
+  iam?: IamState;
   /** Monotonic counter used to mint deterministic ids. */
   seq: number;
 }
@@ -91,6 +95,8 @@ export interface Component {
   securityGroupIds?: string[];
   config: ServiceConfig;
   locked?: boolean;
+  /** IAM role the component runs as: EC2 instance profile or Lambda execution role. */
+  roleId?: string;
 }
 
 // ---------- Service configs ----------
@@ -153,7 +159,7 @@ export interface RdsConfig {
   allocatedStorageGb: number;
 }
 
-export type BucketPolicyPreset = 'none' | 'public-read' | 'cloudfront-oac';
+export type BucketPolicyPreset = 'none' | 'public-read' | 'cloudfront-oac' | 'custom';
 
 export interface S3Config {
   type: 's3';
@@ -164,6 +170,10 @@ export interface S3Config {
   /** CloudFront distribution the cloudfront-oac policy grants. */
   policyDistributionId: ComponentId | null;
   staticWebsite: boolean;
+  /** The bucket policy when `policy` is 'custom'. */
+  customPolicy?: PolicyDocument | null;
+  /** Customer managed key for SSE-KMS (null = the AWS managed key aws/s3). */
+  kmsKeyId?: string | null;
 }
 
 export interface SqsConfig {
@@ -174,6 +184,8 @@ export interface SqsConfig {
   dlqId: ComponentId | null;
   maxReceiveCount: number;
   sse: boolean;
+  /** Queue (resource-based) policy. */
+  policyDoc?: PolicyDocument | null;
 }
 
 export interface LambdaConfig {
@@ -233,6 +245,8 @@ export interface VpceConfig {
   type: 'vpce';
   service: 's3' | 'dynamodb';
   routeTableIds: string[];
+  /** Endpoint policy (null = the default full-access policy). */
+  policyDoc?: PolicyDocument | null;
 }
 
 export type ServiceConfig =
@@ -344,10 +358,12 @@ export type HopCheck =
   | 'edge'
   | 'origin'
   | 'az'
-  | 'exists';
+  | 'exists'
+  | 'endpoint-policy'
+  | 'iam';
 
 export interface HopAt {
-  kind: 'component' | 'subnet' | 'igw' | 'nat' | 'vpce' | 'internet' | 'service' | 'routeTable' | 'sg' | 'nacl';
+  kind: 'component' | 'subnet' | 'igw' | 'nat' | 'vpce' | 'internet' | 'service' | 'routeTable' | 'sg' | 'nacl' | 'role' | 'key';
   id: string;
 }
 
@@ -357,6 +373,8 @@ export interface Hop {
   result: 'allow' | 'deny' | 'info';
   matched?: { objectId: string; ruleRef: string };
   explain: string;
+  /** Full permission evaluation behind an 'iam' hop. */
+  iam?: IamDecision;
 }
 
 export type PathVia = 'local' | 'igw' | 'nat' | 'vpce' | 'edge' | 'none';
@@ -374,7 +392,7 @@ export interface Trace {
 
 // ---------- Simulation ----------
 
-export type EventKind = 'reachability' | 'traffic' | 'azOutage' | 'audit' | 'queueBehavior' | 'bill';
+export type EventKind = 'reachability' | 'traffic' | 'azOutage' | 'audit' | 'queueBehavior' | 'bill' | 'iamAccess' | 'fleetHealth';
 
 export interface EventSpec {
   id: string;
@@ -515,6 +533,63 @@ export interface Mission {
   keywords: string[];
   /** Short hint shown in the brief describing what a good design contains. */
   hints?: string[];
+  /** Incidents start from this prebuilt, broken board instead of the empty layout. */
+  startingBoard?: Board;
+  incident?: IncidentSpec;
+  diff?: DiffSpec;
+}
+
+// ---------- Incidents (Stage 2) ----------
+
+export interface LogSource {
+  id: string;
+  kind: 'alb' | 'flow' | 'cloudtrail' | 'cloudwatch' | 'app';
+  title: string;
+  /** What the source is, in one line (shown above the lines). */
+  note?: string;
+  lines: string[];
+}
+
+export interface IncidentSpec {
+  alert: { title: string; detail: string };
+  /** Investigation actions available (opening a console panel, ad-hoc trace, viewing a log). */
+  budget: number;
+  /** Actions a sharp investigator needs; using no more than this keeps the full 10%. */
+  par: number;
+  logs: LogSource[];
+  /** Suspect id of the root cause (see engine/incident/suspects.ts), e.g. "nacl:acl-app:outbound". */
+  rootCause: string;
+  /** Plain-English explanation revealed in the report. */
+  rootCauseExplain: string;
+  /** Events that show the symptom: they must fail on the starting board. */
+  symptomEvents: string[];
+  /** Change keys a correct fix may touch (prefix match). Anything else is collateral. */
+  allowedChanges: string[];
+  /** Plausible wrong fixes: each must fail an event or be flagged as collateral. */
+  wrongFixes: { name: string; board: Board; expectFail: string[]; collateral: boolean }[];
+}
+
+// ---------- Spot the Difference (Stage 2) ----------
+
+export interface DiffOption {
+  id: string;
+  text: string;
+  why: string;
+  /** Change keys (from diffBoards) this option describes. Options must cover every real difference. */
+  changes: string[];
+}
+
+export interface DiffSpec {
+  left: Board;
+  right: Board;
+  leftLabel: string;
+  rightLabel: string;
+  /** Which side survives the event. */
+  survivor: 'left' | 'right';
+  question: string;
+  options: DiffOption[];
+  correct: string;
+  explanation: string;
 }
 
 export interface Question {
