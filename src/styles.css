@@ -163,7 +163,7 @@ label.field.stack { grid-template-columns: 1fr; }
 .tier { display: grid; gap: 10px; margin-bottom: 10px; position: relative; grid-auto-rows: auto; }
 .subnet {
   border-radius: var(--r); border: 1px solid var(--private-line); background: var(--private);
-  padding: 8px; min-height: 92px; position: relative;
+  padding: 8px; min-height: 92px; position: relative; flex: 1; min-width: 0;
 }
 .subnet.public { border-color: var(--public-line); background: var(--public); }
 .subnet-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; background: none; border: none; padding: 0; text-align: left; width: 100%; }
