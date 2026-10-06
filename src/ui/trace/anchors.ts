@@ -1,5 +1,6 @@
 import type { Board, Hop } from '../../engine/model';
 import { allSubnets } from '../../engine/net/routing';
+import { subnetsOf } from '../../engine/board';
 
 /** DOM selector for the board element a hop should light up. */
 export function anchorSelector(board: Board, hop: Hop, prevSubnet: string | null): string | null {
@@ -7,7 +8,12 @@ export function anchorSelector(board: Board, hop: Hop, prevSubnet: string | null
   if (kind === 'internet') return '[data-node-id="internet"]';
   if (kind === 'service') return '[data-node-id="svc"]';
   if (kind === 'onprem') return '[data-node-id="onprem"]';
-  if (kind === 'component' || kind === 'nat' || kind === 'igw' || kind === 'vpce') return board.components[id] ? `[data-node-id="${id}"]` : null;
+  if (kind === 'component' || kind === 'nat' || kind === 'igw' || kind === 'vpce') {
+    const c = board.components[id];
+    if (!c) return null;
+    // A component in several subnets is drawn once per subnet: light the copy the packet is in.
+    return prevSubnet && subnetsOf(c).length > 1 && subnetsOf(c).includes(prevSubnet) ? `[data-node-id="${id}"][data-in-subnet="${prevSubnet}"]` : `[data-node-id="${id}"]`;
+  }
   if (kind === 'subnet') return `[data-subnet-id="${id}"]`;
   // Permission checks light up the component that runs as the role, or the bucket the key protects.
   if (kind === 'role') {

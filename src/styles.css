@@ -160,7 +160,7 @@ label.field.stack { grid-template-columns: 1fr; }
 .vpc { border: 1px solid var(--line-2); border-radius: var(--r-lg); padding: 10px; background: rgba(10, 14, 19, 0.55); }
 .az-head { display: grid; gap: 10px; margin-bottom: 6px; }
 .az-head div { text-align: center; color: var(--muted); font-family: var(--font-mono); font-size: 12px; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
-.tier { display: grid; gap: 10px; margin-bottom: 10px; position: relative; grid-auto-rows: auto; }
+.tier { display: grid; gap: 10px; margin-bottom: 10px; }
 .subnet {
   border-radius: var(--r); border: 1px solid var(--private-line); background: var(--private);
   padding: 8px; min-height: 92px; position: relative; flex: 1; min-width: 0;
@@ -171,10 +171,6 @@ label.field.stack { grid-template-columns: 1fr; }
 .subnet-head .mono { color: var(--muted); font-size: 11px; }
 .subnet.selected { box-shadow: 0 0 0 2px var(--accent); }
 .subnet-body { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-.span-row { display: flex; flex-direction: column; gap: 6px; padding: 0 8px 8px; z-index: 1; align-self: end; }
-.span-row .node { width: 100%; justify-content: flex-start; }
-.placing-mode .span-row { pointer-events: none; opacity: 0.6; }
-.span-spacer { visibility: hidden; display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
 
 .node {
   display: inline-flex; align-items: center; gap: 8px; padding: 5px 9px 5px 5px; border-radius: var(--r);
@@ -183,13 +179,14 @@ label.field.stack { grid-template-columns: 1fr; }
 }
 .node:hover { border-color: var(--muted); }
 .node .nm { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.node .sub { color: var(--muted); font-size: 11px; font-family: var(--font-mono); white-space: nowrap; }
+.node .sub { color: var(--muted); font-size: 11px; font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* One copy of a multi-AZ component per subnet; a copy that runs nothing there is drawn as an outline. */
+.node.idle { background: transparent; border-style: dashed; opacity: 0.7; }
 .node.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .node.bad { border-color: var(--fail); box-shadow: 0 0 0 1px var(--fail), 0 0 18px rgba(255, 93, 93, 0.35); }
 .node.lit-allow { border-color: var(--pass); box-shadow: 0 0 0 1px var(--pass), 0 0 16px rgba(63, 214, 143, 0.4); }
 .node.lit-deny { border-color: var(--fail); box-shadow: 0 0 0 1px var(--fail), 0 0 16px rgba(255, 93, 93, 0.5); }
 .node.lit-info { border-color: var(--muted); }
-.node .span-label { color: var(--muted); font-size: 11px; margin-left: auto; font-family: var(--font-mono); }
 
 .trace-overlay { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
 .trace-dot { transition: cx 0.45s ease, cy 0.45s ease; }

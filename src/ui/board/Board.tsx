@@ -1,12 +1,12 @@
 import { useDndContext, useDroppable } from '@dnd-kit/core';
 import type { ReactNode } from 'react';
 import type { Board as BoardT, Component, Placement, Region, ServiceType, Subnet, Vpc } from '../../engine/model';
-import { accountOf, subnetsOf, validatePlacement } from '../../engine/board';
+import { accountOf, validatePlacement } from '../../engine/board';
 import { subnetPublicStatus } from '../../engine/net/routing';
 import { SERVICES } from '../../content/services';
 import { useGame } from '../../store/game';
 import { Abbr } from '../shell/Abbr';
-import { nodeSubtitle } from './describe';
+import { nodeSubtitle, presenceIn } from './describe';
 import { TraceOverlay } from '../trace/TraceOverlay';
 import { useBoardView } from './context';
 
@@ -51,60 +51,44 @@ function Zone({ zone, className, children, label }: { zone: Placement; className
   );
 }
 
-function Node({ c, span }: { c: Component; span?: string }) {
+function Node({ c, inSubnet }: { c: Component; inSubnet?: string }) {
   const { board, selection, select, readOnly } = useBoardView();
   const highlight0 = useGame((s) => s.highlight);
   const placing0 = useGame((s) => s.placing);
   const highlight = readOnly ? [] : highlight0;
   const placing = readOnly ? null : placing0;
   const selected = selection?.kind === 'component' && selection.id === c.id;
+  const presence = inSubnet ? presenceIn(c, inSubnet) : null;
+  const cls = ['node', selected ? 'selected' : '', highlight.includes(c.id) ? 'bad' : '', presence?.idle ? 'idle' : ''].filter(Boolean).join(' ');
   return (
     <button
-      className={`node ${selected ? 'selected' : ''} ${highlight.includes(c.id) ? 'bad' : ''}`}
+      className={cls}
       data-node-id={readOnly ? undefined : c.id}
+      data-in-subnet={readOnly || !presence ? undefined : inSubnet}
       onClick={(e) => {
         if (placing) return;
         e.stopPropagation();
         select({ kind: 'component', id: c.id });
       }}
-      aria-label={`${SERVICES[c.type].name} ${c.name}`}
+      aria-label={`${SERVICES[c.type].name} ${c.name}${presence ? ` (${presence.role})` : ''}`}
     >
       <Abbr type={c.type} />
       <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         <span className="nm">{c.name}</span>
-        <span className="sub">{nodeSubtitle(board, c)}</span>
+        <span className="sub">{presence ? (presence.idle || presence.alone ? presence.role : `${presence.role} · ${nodeSubtitle(board, c)}`) : nodeSubtitle(board, c)}</span>
       </span>
-      {span && <span className="span-label">{span}</span>}
     </button>
   );
 }
 
-/** Invisible copies of the multi-AZ nodes drawn over a subnet, so the subnet grows to make room for them. */
-function SpanSpacer({ comps }: { comps: Component[] }) {
-  const { board } = useBoardView();
-  return (
-    <div className="span-spacer" aria-hidden>
-      {comps.map((c) => (
-        <div key={c.id} className="node">
-          <Abbr type={c.type} />
-          <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-            <span className="nm">{c.name}</span>
-            <span className="sub">{nodeSubtitle(board, c)}</span>
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function SubnetCell({ s, col, reserve, children }: { s: Subnet; col: number; reserve?: Component[]; children: ReactNode }) {
+function SubnetCell({ s, col, children }: { s: Subnet; col: number; children: ReactNode }) {
   const { board, selection, select, readOnly } = useBoardView();
   const placing0 = useGame((st) => st.placing);
   const placing = readOnly ? null : placing0;
   const status = subnetPublicStatus(board, s);
   const selected = selection?.kind === 'subnet' && selection.id === s.id;
   return (
-    <div style={{ gridColumn: col, gridRow: '1 / 3', display: 'flex' }}>
+    <div style={{ gridColumn: col, display: 'flex' }}>
       <Zone zone={{ kind: 'subnet', refId: s.id }} className={`subnet ${status.isPublic ? 'public' : ''} ${selected ? 'selected' : ''}`} label={`Subnet ${s.name}`}>
         <div data-subnet-id={readOnly ? undefined : s.id} style={{ width: '100%' }}>
           <button
@@ -122,7 +106,6 @@ function SubnetCell({ s, col, reserve, children }: { s: Subnet; col: number; res
           </button>
           <div className="hint" style={{ fontSize: 11, marginTop: 2 }}>{status.reason}</div>
           <div className="subnet-body">{children}</div>
-          {reserve && reserve.length > 0 && <SpanSpacer comps={reserve} />}
         </div>
       </Zone>
     </div>
@@ -166,49 +149,25 @@ function VpcView({ board, vpc }: { board: BoardT; vpc: Vpc }) {
           <div key={a.id}>{a.name}</div>
         ))}
       </div>
-      {tiers.map((tier) => {
-        const cells = vpc.azs.map((az) => az.subnets.find((s) => s.tier === tier) ?? null);
-        const inTier = new Set(cells.filter(Boolean).flatMap((s) => s!.components));
-        const comps = [...inTier].map((id) => board.components[id]).filter(Boolean);
-        const spanning: { c: Component; from: number; to: number }[] = [];
-        const single: Record<string, Component[]> = {};
-        for (const c of comps) {
-          const cols = cells.map((s, i) => (s && subnetsOf(c).includes(s.id) ? i : -1)).filter((i) => i >= 0);
-          if (cols.length > 1) spanning.push({ c, from: Math.min(...cols), to: Math.max(...cols) });
-          else {
-            const sid = cells[cols[0]]!.id;
-            (single[sid] ??= []).push(c);
-          }
-        }
-        return (
-          <div key={tier} className="tier" style={{ gridTemplateColumns: cols }}>
-            {cells.map((s, i) =>
-              s ? (
-                <SubnetCell key={s.id} s={s} col={i + 1} reserve={spanning.filter((sp) => sp.from <= i && i <= sp.to).map((sp) => sp.c)}>
-                  {(single[s.id] ?? []).map((c) => (
-                    <Node key={c.id} c={c} />
+      {tiers.map((tier) => (
+        <div key={tier} className="tier" style={{ gridTemplateColumns: cols }}>
+          {vpc.azs.map((az, i) => {
+            const s = az.subnets.find((x) => x.tier === tier);
+            return s ? (
+              <SubnetCell key={s.id} s={s} col={i + 1}>
+                {s.components
+                  .map((id) => board.components[id])
+                  .filter(Boolean)
+                  .map((c) => (
+                    <Node key={c.id} c={c} inSubnet={s.id} />
                   ))}
-                </SubnetCell>
-              ) : (
-                <div key={i} style={{ gridColumn: i + 1, gridRow: '1 / 3' }} />
-              ),
-            )}
-            {spanning.length > 0 &&
-              (() => {
-                // Group spanning components by column range so equal spans stack.
-                const groups: Record<string, typeof spanning> = {};
-                for (const sp of spanning) (groups[`${sp.from}-${sp.to}`] ??= []).push(sp);
-                return Object.entries(groups).map(([k, g]) => (
-                  <div key={k} className="span-row" style={{ gridColumn: `${g[0].from + 1} / ${g[0].to + 2}`, gridRow: 2 }}>
-                    {g.map(({ c, from, to }) => (
-                      <Node key={c.id} c={c} span={`spans ${to - from + 1} AZs`} />
-                    ))}
-                  </div>
-                ));
-              })()}
-          </div>
-        );
-      })}
+              </SubnetCell>
+            ) : (
+              <div key={i} style={{ gridColumn: i + 1 }} />
+            );
+          })}
+        </div>
+      ))}
     </div>
   );
 }
