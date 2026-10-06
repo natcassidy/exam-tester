@@ -1,4 +1,5 @@
 import type { Board, Component } from '../../engine/model';
+import { subnetsOf } from '../../engine/board';
 
 /** One-line config summary under a node name. */
 export function nodeSubtitle(board: Board, c: Component): string {
@@ -69,5 +70,36 @@ export function nodeSubtitle(board: Board, c: Component): string {
       return cfg.plan === 'compute-sp' || cfg.plan === 'ec2-instance-sp'
         ? `${cfg.plan === 'compute-sp' ? 'Compute SP' : `EC2 Instance SP (${cfg.instanceType.split('.')[0]})`} · $${cfg.hourlyCommit}/h · ${cfg.termYears} y`
         : `${cfg.count}× ${cfg.instanceType} ${cfg.plan === 'standard-ri' ? 'Standard' : 'Convertible'} RI · ${cfg.termYears} y`;
+  }
+}
+
+/**
+ * What a component placed in several subnets actually runs in one of them: an ALB node per subnet,
+ * a share of the ASG's instances, the RDS primary or standby. `idle` marks a subnet the component
+ * may use but runs nothing in today (the other half of a Single-AZ DB subnet group). `alone` means
+ * the role already says everything the usual subtitle would.
+ */
+export function presenceIn(c: Component, subnetId: string): { role: string; idle?: boolean; alone?: boolean } | null {
+  const subs = subnetsOf(c);
+  if (subs.length < 2) return null;
+  const i = subs.indexOf(subnetId);
+  const cfg = c.config;
+  switch (cfg.type) {
+    case 'alb':
+      return { role: 'node' };
+    case 'asg': {
+      const n = Math.floor(cfg.desired / subs.length) + (i < cfg.desired % subs.length ? 1 : 0);
+      return n ? { role: `${n} of ${cfg.desired} × ${cfg.instanceType}`, alone: true } : { role: 'no instances', idle: true };
+    }
+    case 'rds':
+      if (i === 0) return { role: 'primary' };
+      return cfg.multiAz && !cfg.replicaOf && i === 1 ? { role: 'standby' } : { role: 'subnet group', idle: true };
+    case 'aurora': {
+      if (i === 0) return { role: 'writer' };
+      const n = Math.floor(cfg.readers / (subs.length - 1)) + (i - 1 < cfg.readers % (subs.length - 1) ? 1 : 0);
+      return n ? { role: n === 1 ? 'reader' : `${n} readers` } : { role: 'storage only', idle: true };
+    }
+    default:
+      return { role: `${i + 1} of ${subs.length}` };
   }
 }
