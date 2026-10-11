@@ -110,7 +110,11 @@ export const AUDIT_RULES: Record<string, AuditRule> = {
         for (const sgId of c.securityGroupIds ?? []) {
           const sg = b.securityGroups[sgId];
           const open = sg?.inbound.find((r) => 'cidr' in r.source && r.source.cidr === '0.0.0.0/0');
-          if (open) return { status: 'fail', message: `${sg.name} (on ${c.name}) allows inbound from 0.0.0.0/0. Reference the security group of the tier in front instead (ALB SG → app SG → DB SG).`, highlight: [c.id], fixTarget: sg.id };
+          if (!open) continue;
+          // The load balancer's SG is meant to be open; the mistake is attaching it to the private tier, so send the fix to the component.
+          const lb = Object.values(b.components).find((o) => o.type === 'alb' && o.securityGroupIds?.includes(sgId));
+          if (lb) return { status: 'fail', message: `${c.name} has the load balancer's security group (${sg.name}) attached, and that group allows inbound from 0.0.0.0/0. Untick ${sg.name} on ${c.name} and keep only its own group, which should allow traffic from ${sg.name} as a source (ALB SG → app SG → DB SG).`, highlight: [c.id], fixTarget: c.id };
+          return { status: 'fail', message: `${sg.name} (on ${c.name}) allows inbound from 0.0.0.0/0. Reference the security group of the tier in front instead (ALB SG → app SG → DB SG).`, highlight: [c.id], fixTarget: sg.id };
         }
       return { status: 'pass', message: 'App and data tiers only accept traffic from the security group in front of them.', highlight: [] };
     },
