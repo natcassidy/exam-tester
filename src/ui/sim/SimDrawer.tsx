@@ -106,6 +106,7 @@ function ResultCard({ ev, r, missionId, surprise }: { ev: EventSpec; r: EventRes
   const [detail, setDetail] = useState(r.status === 'fail' && (r.detail?.lines.filter((l) => l.status === 'fail' && l.fix).length ?? 0) > 1);
   const [stuck, setStuck] = useState(false);
   const board = useGame((s) => s.board());
+  const runBoard = useGame((s) => s.resultsBoard[missionId]);
   const followFix = useGame((s) => s.followFix);
   const showTrace = useGame((s) => s.showTrace);
   const openManual = useGame((s) => s.openManual);
@@ -233,7 +234,7 @@ function ResultCard({ ev, r, missionId, surprise }: { ev: EventSpec; r: EventRes
             onClick={() => {
               const from = resolveEndpoint(board, ev.params.from) ?? 'internet';
               const to = resolveEndpoint(board, ev.params.to) ?? 'internet';
-              showTrace(r.trace!, { from, to, protocol: 'tcp', port: ev.params.port, clientCity: ev.params.clientCity }, ev.name);
+              showTrace(r.trace!, { from, to, protocol: 'tcp', port: ev.params.port, clientCity: ev.params.clientCity }, ev.name, { board: runBoard });
               openTrace(true);
             }}
           >
@@ -392,11 +393,11 @@ export function SimDrawer() {
           )}
           {report && <IncidentReport mission={mission} report={report} />}
           {refactor && <RefactorReport rs={refactor} />}
-          {surprise?.result && surprise.result.status !== 'pass' && <ResultCard key={`surprise${surprise.result.status}${surprise.result.summary}`} ev={surprise.event} r={surprise.result} missionId={mission.id} surprise />}
+          {results && surprise?.result && surprise.result.status !== 'pass' && <ResultCard key={`surprise${surprise.result.status}${surprise.result.summary}`} ev={surprise.event} r={surprise.result} missionId={mission.id} surprise />}
           {ordered.map(({ ev, r }) => (
             <ResultCard key={ev.id + r.status + r.summary} ev={ev} r={r} missionId={mission.id} />
           ))}
-          {surprise?.result && surprise.result.status === 'pass' && <ResultCard key={`surprise${surprise.result.status}${surprise.result.summary}`} ev={surprise.event} r={surprise.result} missionId={mission.id} surprise />}
+          {results && surprise?.result && surprise.result.status === 'pass' && <ResultCard key={`surprise${surprise.result.status}${surprise.result.summary}`} ev={surprise.event} r={surprise.result} missionId={mission.id} surprise />}
           {score && !isIncident && (
             <div className="result wide" style={{ borderLeftColor: 'var(--accent)' }}>
               <div className="result-head">

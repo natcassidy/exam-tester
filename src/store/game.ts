@@ -85,6 +85,8 @@ export interface ActiveTrace {
   nonce: number;
   /** The board the trace ran on: once the player edits it, the trace is stale. */
   board: Board;
+  /** Set for traces the player ran (ad-hoc trace or API call), which "Re-run" can repeat on the current board. */
+  replayable?: boolean;
 }
 
 interface UiState {
@@ -150,7 +152,8 @@ interface Actions {
   resetBoard: () => void;
   runSim: () => void;
   runTrace: (flow: Flow, label: string) => void;
-  showTrace: (t: Trace, flow: Flow, label: string) => void;
+  /** Show a trace; `board` is the board it was computed on (a simulation run's), defaulting to the current one. */
+  showTrace: (t: Trace, flow: Flow, label: string, opts?: { board?: Board; replayable?: boolean }) => void;
   clearTrace: () => void;
   openSim: (v: boolean) => void;
   openTrace: (v: boolean) => void;
@@ -432,13 +435,24 @@ export const useGame = create<GameState>()(
           delete reports[m.id];
           const refactorScores = { ...s.refactorScores };
           delete refactorScores[m.id];
+          const surprise = { ...s.surprise };
+          delete surprise[m.id];
           // An incident restart also clears actions and the diagnosis, which undo can't bring back.
           const h = s.history[m.id] ?? NO_HISTORY;
           const history = { ...s.history, [m.id]: m.incident ? NO_HISTORY : { past: [...h.past, before].slice(-HISTORY_LIMIT), future: [] } };
-          return { boards, results, incidents, reports, refactorScores, history, selection: null, activeTrace: null, highlight: [], fixNote: null };
+          return { boards, results, incidents, reports, refactorScores, surprise, history, selection: null, activeTrace: null, highlight: [], fixNote: null };
         });
         if (m.incident) get().toast(`${m.title}: incident restarted from the alert.`, 'info');
-        else get().toast(`${m.title}: board reset.`, 'info', { label: 'Undo', run: () => get().undo() });
+        else
+          get().toast(`${m.title}: board reset.`, 'info', {
+            label: 'Undo',
+            run: () => {
+              // Only if nothing happened since: the reset must still be the latest change on this mission.
+              const h = get().history[m.id];
+              if (get().currentMissionId === m.id && h?.past[h.past.length - 1] === before && get().board() === startBoardFor(m)) get().undo();
+              else get().toast('The board changed after the reset; use Undo in the toolbar to step back.', 'info');
+            },
+          });
       },
 
       runSim: () => {
@@ -518,17 +532,18 @@ export const useGame = create<GameState>()(
       runTrace: (flow, label) => {
         get().charge(`trace:${flow.from}>${flow.to}:${flow.protocol}:${flow.port}`, `traced ${label}`);
         const t = traceFlow(get().board(), flow);
-        get().showTrace(t, flow, label);
+        get().showTrace(t, flow, label, { replayable: true });
       },
       runCallTrace: (call, label) => {
         get().charge(`call:${call.principal}>${call.action}>${call.resource}:${call.objectKey ?? ''}`, `simulated ${label}`);
         const trace = traceCall(get().board(), call);
-        set((s) => ({ activeTrace: { trace, flow: { from: call.principal, to: call.resource, protocol: 'tcp', port: 443 }, label, call, nonce: (s.activeTrace?.nonce ?? 0) + 1, board: get().board() }, traceOpen: true }));
+        set((s) => ({ activeTrace: { trace, flow: { from: call.principal, to: call.resource, protocol: 'tcp', port: 443 }, label, call, nonce: (s.activeTrace?.nonce ?? 0) + 1, board: get().board(), replayable: true }, traceOpen: true }));
       },
-      showTrace: (trace, flow, label) => set((s) => ({ activeTrace: { trace, flow, label, nonce: (s.activeTrace?.nonce ?? 0) + 1, board: get().board() }, traceOpen: true })),
+      showTrace: (trace, flow, label, opts) =>
+        set((s) => ({ activeTrace: { trace, flow, label, nonce: (s.activeTrace?.nonce ?? 0) + 1, board: opts?.board ?? get().board(), replayable: opts?.replayable }, traceOpen: true })),
       rerunTrace: () => {
         const a = get().activeTrace;
-        if (!a) return;
+        if (!a?.replayable) return;
         if (a.call) return get().runCallTrace(a.call, a.label);
         get().runTrace(a.flow, a.label);
       },

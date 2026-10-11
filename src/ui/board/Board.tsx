@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import type { Board as BoardT, Component, Placement, Region, ServiceType, Subnet, Vpc } from '../../engine/model';
 import { accountOf, subnetsOf, validatePlacement } from '../../engine/board';
 import { subnetPublicStatus } from '../../engine/net/routing';
+import { sgLender } from '../../engine/net/sg';
 import { SERVICES } from '../../content/services';
 import { useGame } from '../../store/game';
 import { Abbr } from '../shell/Abbr';
@@ -54,12 +55,6 @@ function Zone({ zone, className, children, label }: { zone: Placement; className
   );
 }
 
-/** The component a group belongs to, when `c` wears it second-hand (it is another component's first group, not c's). */
-function lender(board: BoardT, c: Component, sgId: string): Component | undefined {
-  if (c.securityGroupIds?.[0] === sgId) return undefined;
-  return Object.values(board.components).find((o) => o.id !== c.id && o.securityGroupIds?.[0] === sgId);
-}
-
 /** The security groups a component wears, flagging ones it borrowed from another component. */
 function SgChips({ board, c }: { board: BoardT; c: Component }) {
   if (!c.securityGroupIds?.length) return null;
@@ -68,7 +63,7 @@ function SgChips({ board, c }: { board: BoardT; c: Component }) {
       {c.securityGroupIds.map((id) => {
         const sg = board.securityGroups[id];
         if (!sg) return null;
-        const home = lender(board, c, id);
+        const home = sgLender(board, c, id);
         return (
           <span key={id} className={`sg-chip ${home ? 'borrowed' : ''}`} title={home ? `${sg.name} belongs to ${home.name}. Attaching it here lets ${c.name} accept everything ${home.name} accepts.` : `Security group ${sg.name}`}>
             {home && '⚠ '}
@@ -109,7 +104,7 @@ function Node({ c, span }: { c: Component; span?: string }) {
         <span className="nm">{c.name}</span>
         <span className="sub">{nodeSubtitle(board, c)}</span>
         {/* Flag a borrowed group (except in incidents, where spotting it is the job); show every group in the Security view. */}
-        {(securityView || (!incident && !readOnly && c.securityGroupIds?.some((id) => lender(board, c, id)))) && <SgChips board={board} c={c} />}
+        {(securityView || (!incident && !readOnly && c.securityGroupIds?.some((id) => sgLender(board, c, id)))) && <SgChips board={board} c={c} />}
       </span>
       {span && <span className="span-label">{span}</span>}
       {issues && <span className="lint-badge" aria-hidden>⚠</span>}

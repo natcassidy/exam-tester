@@ -6,6 +6,7 @@
 import type { Board, Component, SecurityGroup, ServiceType, SgRule } from '../model';
 import { subnetsOf } from '../board';
 import { findSubnet, targetId, targetKind } from '../net/routing';
+import { sgHomes, sgLender, sgPorts } from '../net/sg';
 
 export interface RefDifference {
   /** Short heading: the object the difference is about. */
@@ -46,6 +47,16 @@ function placement(b: Board, c: Component): string {
   return subs.length ? `${subs.map((s) => s!.name).join(', ')}` : 'a subnet';
 }
 
+/**
+ * A config value compared across boards: component ids on the reference side are mapped to the
+ * player's component paired with them, so a renamed but correctly wired component isn't a difference.
+ */
+function token(v: unknown, toPlayer: (id: string) => string | undefined, isComponent: (id: string) => boolean): string {
+  if (typeof v === 'string' && isComponent(v)) return `comp:${toPlayer(v) ?? `unpaired:${v}`}`;
+  if (Array.isArray(v)) return JSON.stringify(v.map((x) => token(x, toPlayer, isComponent)));
+  return JSON.stringify(v ?? null);
+}
+
 /** A config value in words, with component ids replaced by names. */
 function show(b: Board, v: unknown): string {
   if (v === null || v === undefined || v === '') return 'none';
@@ -69,24 +80,12 @@ function flat(cfg: Record<string, unknown>): Record<string, unknown> {
 
 const words = (k: string) => k.replace(/\./g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
 
-/** Who carries a security group, as types (stable across boards) and names (for display). */
-function owners(b: Board, sgId: string): Component[] {
-  return Object.values(b.components).filter((c) => c.securityGroupIds?.includes(sgId));
-}
-
-/** The components a group belongs to: those that carry it as their first group (the one created with them). Others borrowed it. */
-function homes(b: Board, sgId: string): Component[] {
-  const all = owners(b, sgId);
-  const first = all.filter((c) => c.securityGroupIds![0] === sgId);
-  return first.length ? first : all;
-}
-
 /** An SG rule in terms that survive different ids: "TCP 443 from web-alb's group". */
 function ruleInRoles(b: Board, r: SgRule): { key: string; text: string } {
-  const ports = r.protocol === 'all' ? 'all traffic' : `${r.protocol.toUpperCase()} ${r.fromPort === r.toPort ? r.fromPort : `${r.fromPort}-${r.toPort}`}`;
+  const ports = sgPorts(r);
   if ('cidr' in r.source) return { key: `${ports}|cidr:${r.source.cidr}`, text: `${ports} from ${r.source.cidr}` };
   if ('prefixList' in r.source) return { key: `${ports}|pl:${r.source.prefixList}`, text: `${ports} from ${r.source.prefixList}` };
-  const os = homes(b, r.source.sg);
+  const os = sgHomes(b, r.source.sg);
   const types = [...new Set(os.map((o) => o.type))].sort().join('+') || 'none';
   const sg = b.securityGroups[r.source.sg];
   return { key: `${ports}|sg:${types}`, text: `${ports} from ${os.length ? `${os.map((o) => o.name).join('/')}'s group (${sg?.name ?? r.source.sg})` : sg?.name ?? r.source.sg}` };
@@ -95,7 +94,7 @@ function ruleInRoles(b: Board, r: SgRule): { key: string; text: string } {
 function sgDiffs(player: Board, ref: Board, rc: Component, pc: Component): RefDifference[] {
   const out: RefDifference[] = [];
   // A group this component borrowed from another one (it isn't the group's home).
-  const borrowed = (b: Board, c: Component, sg: SecurityGroup) => (homes(b, sg.id).some((h) => h.id === c.id) ? [] : homes(b, sg.id));
+  const borrowed = (b: Board, c: Component, sg: SecurityGroup) => (sgLender(b, c, sg.id) ? sgHomes(b, sg.id) : []);
   const rSgs = (rc.securityGroupIds ?? []).map((id) => ref.securityGroups[id]).filter(Boolean);
   const pSgs = (pc.securityGroupIds ?? []).map((id) => player.securityGroups[id]).filter(Boolean);
   // Groups borrowed from another tier (the classic: the load balancer's group on the app servers).
@@ -122,7 +121,7 @@ function sgDiffs(player: Board, ref: Board, rc: Component, pc: Component): RefDi
   return out;
 }
 
-function componentDiffs(player: Board, ref: Board, rc: Component, pc: Component): RefDifference[] {
+function componentDiffs(player: Board, ref: Board, rc: Component, pc: Component, pairs: Map<string, Component | undefined>): RefDifference[] {
   const out: RefDifference[] = [];
   const rSubs = subnetsOf(rc);
   const pSubs = subnetsOf(pc);
@@ -130,10 +129,10 @@ function componentDiffs(player: Board, ref: Board, rc: Component, pc: Component)
     out.push({ area: pc.name, text: `The reference puts ${rc.name} in ${placement(ref, rc)}. Yours is in ${placement(player, pc)}.`, types: [pc.type], playerTarget: pc.id });
   const rf = flat(rc.config as unknown as Record<string, unknown>);
   const pf = flat(pc.config as unknown as Record<string, unknown>);
+  const viaPairs = (id: string) => pairs.get(id)?.id;
   for (const k of Object.keys(rf)) {
-    const a = show(ref, rf[k]);
-    const b = show(player, pf[k]);
-    if (a !== b) out.push({ area: pc.name, text: `${pc.name} ${words(k)}: the reference uses ${a}, yours is ${b}.`, types: [pc.type], playerTarget: pc.id });
+    const same = token(rf[k], viaPairs, (id) => !!ref.components[id]) === token(pf[k], (id) => id, (id) => !!player.components[id]);
+    if (!same) out.push({ area: pc.name, text: `${pc.name} ${words(k)}: the reference uses ${show(ref, rf[k])}, yours is ${show(player, pf[k])}.`, types: [pc.type], playerTarget: pc.id });
   }
   if ((rc.roleId ? ref.iam?.roles[rc.roleId]?.name : null) !== (pc.roleId ? player.iam?.roles[pc.roleId]?.name : null))
     out.push({ area: pc.name, text: `The reference gives ${rc.name} the role ${rc.roleId ? ref.iam?.roles[rc.roleId]?.name ?? rc.roleId : 'none'}; yours has ${pc.roleId ? player.iam?.roles[pc.roleId]?.name ?? pc.roleId : 'none'}.`, types: [pc.type], playerTarget: pc.id });
@@ -196,7 +195,7 @@ export function compareToReference(player: Board, ref: Board): RefDifference[] {
   for (const [rid, pc] of pairs) {
     const rc = ref.components[rid];
     if (!pc) out.push({ area: rc.name, text: `The reference has ${rc.name} (${rc.type.toUpperCase()}) in ${placement(ref, rc)}. Your board has none.`, types: [rc.type] });
-    else out.push(...componentDiffs(player, ref, rc, pc));
+    else out.push(...componentDiffs(player, ref, rc, pc, pairs));
   }
   const paired = new Set([...pairs.values()].filter(Boolean).map((c) => c!.id));
   for (const c of Object.values(player.components))

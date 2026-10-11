@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { attachSecurityGroups, createBoardFromLayout } from '../../src/engine/board';
+import { attachSecurityGroups, createBoardFromLayout, renameComponent } from '../../src/engine/board';
 import { compareToReference, relevantFirst } from '../../src/engine/assist/compare';
 import { ledgerly } from '../../src/content/missions/ledgerly';
 import { MISSIONS } from '../../src/content/missions';
@@ -11,6 +11,15 @@ describe('compareToReference', () => {
 
   it.each(MISSIONS.map((m) => [m.id, m] as const))('%s: every mistake shows at least one difference', (_id, m) => {
     for (const mistake of m.mistakes) expect(compareToReference(mistake.board, m.reference).length, mistake.name).toBeGreaterThan(0);
+  });
+
+  it('a renamed component that is wired the same way is not a difference', () => {
+    const ref = ledgerly.reference;
+    const asg = Object.values(ref.components).find((c) => c.name === 'app-asg')!;
+    const r = renameComponent(ref, asg.id, 'web-fleet');
+    if (!r.ok) throw new Error(r.error);
+    // The ALB's target, the database's security group source, the WAF association: all still the paired components.
+    expect(compareToReference(r.board, ref)).toEqual([]);
   });
 
   it('an empty board is missing every reference component', () => {

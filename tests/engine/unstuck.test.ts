@@ -11,7 +11,7 @@ import { evidenceLabel } from '../../src/ui/mastery/labels';
 const g = () => useGame.getState();
 
 beforeEach(() => {
-  useGame.setState({ boards: {}, history: {}, results: {}, resultsBoard: {}, assists: {}, conceptEvidence: [], fixNote: null, selection: null, incidents: {} });
+  useGame.setState({ boards: {}, history: {}, results: {}, resultsBoard: {}, assists: {}, conceptEvidence: [], fixNote: null, selection: null, incidents: {}, toasts: [], surprise: {} });
   g().setMission('ledgerly');
 });
 
@@ -45,6 +45,28 @@ describe('undo and redo', () => {
     g().select({ kind: 'component', id });
     g().undo();
     expect(g().selection).toBeNull();
+  });
+});
+
+describe('the reset toast', () => {
+  it("undoes the reset only while it is still the latest change", () => {
+    g().place('alb', { kind: 'subnet', refId: 'public-a' });
+    const placed = g().board();
+    g().resetBoard();
+    const undoReset = () => g().toasts.find((t) => t.action?.label === 'Undo')!.action!.run();
+    g().place('nat', { kind: 'subnet', refId: 'public-a' });
+    const afterNat = g().board();
+    undoReset();
+    expect(g().board()).toBe(afterNat); // the NAT placement wasn't undone
+    g().undo(); // back to the reset (empty) board
+    undoReset();
+    expect(g().board()).toBe(placed);
+  });
+
+  it('clears the surprise result with the rest of the run', () => {
+    useGame.setState({ surprise: { ledgerly: { event: ledgerly.events[0], result: { eventId: 'x', status: 'fail', summary: '', lesson: '', manual: [], highlight: [] } } } });
+    g().resetBoard();
+    expect(g().surprise.ledgerly).toBeUndefined();
   });
 });
 

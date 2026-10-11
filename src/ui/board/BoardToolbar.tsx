@@ -20,6 +20,7 @@ export function BoardToolbar() {
   const rerunTrace = useGame((s) => s.rerunTrace);
   const clearTrace = useGame((s) => s.clearTrace);
   const select = useGame((s) => s.select);
+  const followFix = useGame((s) => s.followFix);
   const charge = useGame((s) => s.charge);
   const live = useLiveAudit();
   const reset = () => {
@@ -57,7 +58,11 @@ export function BoardToolbar() {
         <button
           className={`btn small ghost live ${live.issues.length ? 'bad' : 'ok'}`}
           title={live.issues.length ? live.issues.map((i) => `${i.rule.title}: ${i.finding.message}`).join('\n') : "The mission's security checks pass on this board."}
-          onClick={() => firstIssue?.finding.highlight[0] && select({ kind: 'component', id: firstIssue.finding.highlight[0] })}
+          onClick={() => {
+            const f = firstIssue?.finding;
+            if (f?.fix?.target) followFix(f.fix, `Live check: ${firstIssue!.rule.title}`);
+            else if (f?.highlight[0]) select({ kind: 'component', id: f.highlight[0] });
+          }}
           disabled={!live.issues.length}
         >
           <Icon name={live.issues.length ? 'warn' : 'shield'} /> {live.issues.length ? `${live.issues.length} security issue${live.issues.length > 1 ? 's' : ''}` : 'Security checks pass'}
@@ -67,8 +72,8 @@ export function BoardToolbar() {
       {trace && (
         <span className={`trace-chip ${stale ? 'stale' : ''}`}>
           <Icon name="trace" /> <span className="t">{trace.label}</span>
-          {stale && <span className="hint">board changed since</span>}
-          {stale && (
+          {stale && <span className="hint">{trace.replayable ? 'board changed since' : 'from an earlier run'}</span>}
+          {stale && trace.replayable && (
             <button className="btn small" onClick={rerunTrace}>
               Re-run
             </button>

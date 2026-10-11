@@ -76,7 +76,9 @@ export const traffic: EventHandler = (board, ev) => {
       }
       if (p.db && db && peakDb > 1) {
         lesson = `The database is the bottleneck (${pct(peakDb)} of ${db.label} capacity). Add read replicas for reads or a larger instance class.`;
-        fix = { target: db.id, hint: `Open ${board.components[db.id]?.name ?? 'the database'} and add "Read replicas" for the reads, or pick a larger "Instance class".`, focus: { tab: 'config', label: 'Read replicas' } };
+        const aurora = board.components[db.id]?.type === 'aurora';
+        const replicas = aurora ? 'Aurora Replicas' : 'Read replicas';
+        fix = { target: db.id, hint: `Open ${board.components[db.id]?.name ?? 'the database'} and add "${replicas}" for the reads, or pick a larger "Instance class".`, focus: { tab: 'config', label: replicas } };
       }
     }
     return result(ev, {

@@ -1,6 +1,7 @@
 // Who can reach whom through security groups, as a graph for the board's Security view.
 
 import type { Board, Component, SgRule } from '../model';
+import { fromWorld, sgOwners, sgPorts } from './sg';
 
 /** One arrow: traffic that `to`'s security groups let in from `from` (a component or the internet). */
 export interface SgEdge {
@@ -13,7 +14,6 @@ export interface SgEdge {
   via: string[];
 }
 
-const ports = (r: SgRule) => (r.protocol === 'all' ? 'all' : `${r.protocol.toUpperCase()} ${r.fromPort === r.toPort ? r.fromPort : `${r.fromPort}-${r.toPort}`}`);
 /** Entry points that are meant to accept the whole internet. */
 const PUBLIC_ENTRY = ['alb', 'cloudfront', 'apigw'];
 
@@ -23,7 +23,7 @@ export function sgEdges(board: Board): SgEdge[] {
   const add = (from: string, to: Component, r: SgRule, sgName: string, open: boolean) => {
     const k = `${from}>${to.id}`;
     const e = edges.get(k) ?? { from, to: to.id, ports: [], open, via: [] };
-    if (!e.ports.includes(ports(r))) e.ports.push(ports(r));
+    if (!e.ports.includes(sgPorts(r))) e.ports.push(sgPorts(r));
     if (!e.via.includes(sgName)) e.via.push(sgName);
     e.open ||= open;
     edges.set(k, e);
@@ -35,8 +35,8 @@ export function sgEdges(board: Board): SgEdge[] {
       for (const r of sg.inbound) {
         if ('sg' in r.source) {
           const src = r.source.sg;
-          for (const o of Object.values(board.components)) if (o.id !== c.id && o.securityGroupIds?.includes(src)) add(o.id, c, r, sg.name, false);
-        } else if ('cidr' in r.source && r.source.cidr === '0.0.0.0/0') add('internet', c, r, sg.name, !PUBLIC_ENTRY.includes(c.type));
+          for (const o of sgOwners(board, src)) if (o.id !== c.id) add(o.id, c, r, sg.name, false);
+        } else if (fromWorld(r)) add('internet', c, r, sg.name, !PUBLIC_ENTRY.includes(c.type));
       }
     }
   }

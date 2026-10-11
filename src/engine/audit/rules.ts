@@ -3,6 +3,7 @@
 import type { Board, Component, ComponentId, ConceptId, FixFocus, FixPointer, S3Config, SgRule } from '../model';
 import { componentsOfType, subnetsOf } from '../board';
 import { isPublicSubnet } from '../net/routing';
+import { fromWorld, sgOwners, sgPorts } from '../net/sg';
 
 export interface AuditFinding {
   status: 'pass' | 'fail' | 'na';
@@ -30,7 +31,7 @@ const CONFIG = (label: string): FixFocus => ({ tab: 'config', label });
 const NETWORKING = (label: string): FixFocus => ({ tab: 'networking', label });
 
 const covers = (r: SgRule, p: number) => r.protocol === 'all' || (r.protocol === 'tcp' && r.fromPort <= p && r.toPort >= p);
-const isWorld = (r: SgRule) => 'cidr' in r.source && r.source.cidr === '0.0.0.0/0';
+const isWorld = fromWorld;
 const ruleRef = (dir: 'inbound' | 'outbound', i: number) => `${dir} rule #${i + 1}`;
 
 /** The security group a tier should accept traffic from: the load balancer's for app servers, the app tier's for databases. */
@@ -129,7 +130,7 @@ export const AUDIT_RULES: Record<string, AuditRule> = {
           const i = sg?.inbound.findIndex(isWorld) ?? -1;
           if (!sg || i < 0) continue;
           // The load balancer's SG is meant to be open; the mistake is attaching it to the private tier.
-          const lb = Object.values(b.components).find((o) => o.type === 'alb' && o.securityGroupIds?.includes(sgId));
+          const lb = sgOwners(b, sgId).find((o) => o.type === 'alb');
           if (lb) {
             const own = (c.securityGroupIds ?? []).filter((x) => x !== sgId).map((x) => b.securityGroups[x]?.name).filter(Boolean);
             return fail(`${c.name} has the load balancer's security group (${sg.name}) attached, and ${sg.name} allows inbound from 0.0.0.0/0. ${c.name} should carry only its own group${own.length ? ` (${own.join(', ')})` : ''}, and that group should allow traffic from ${sg.name}.`, [c.id], {
@@ -139,8 +140,7 @@ export const AUDIT_RULES: Record<string, AuditRule> = {
             });
           }
           const front = frontSgName(b, c);
-          const r = sg.inbound[i];
-          const ports = r.protocol === 'all' ? 'all traffic' : `${r.protocol.toUpperCase()} ${r.fromPort === r.toPort ? r.fromPort : `${r.fromPort}-${r.toPort}`}`;
+          const ports = sgPorts(sg.inbound[i]);
           return fail(`${sg.name} (on ${c.name}) allows ${ports} from 0.0.0.0/0 (inbound rule #${i + 1}). The source should be ${front ? `the security group in front of it, ${front}` : 'the security group of the tier in front of it'}, not an address range.`, [c.id], {
             target: sg.id,
             hint: `In ${sg.name}, delete inbound rule #${i + 1} and add the same port with source type "Security group" and ${front ? `source ${front}` : 'the front tier\'s group as the source'}.`,

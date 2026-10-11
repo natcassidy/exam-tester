@@ -26,8 +26,12 @@ export function usePointAt(root: RefObject<HTMLElement | null>, label: string | 
     box.classList.remove('focus-pulse');
     void box.offsetWidth; // restart the animation
     box.classList.add('focus-pulse');
-    const t = setTimeout(() => box.classList.remove('focus-pulse'), 3200);
-    return () => clearTimeout(t);
+    const el = box;
+    const t = setTimeout(() => el.classList.remove('focus-pulse'), 3200);
+    return () => {
+      clearTimeout(t);
+      el.classList.remove('focus-pulse');
+    };
   }, deps); // eslint-disable-line react-hooks/exhaustive-deps
 }
 

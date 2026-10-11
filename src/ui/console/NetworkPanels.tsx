@@ -3,7 +3,7 @@ import type { Component, NaclRule, Protocol, RouteTarget, SgRule } from '../../e
 import * as ops from '../../engine/board';
 import { MULTI_SUBNET, subnetsOf, vpcOfComponent } from '../../engine/board';
 import { evaluateNacl, sortedRules } from '../../engine/net/nacl';
-import { describeSgRule, sourceLabel } from '../../engine/net/sg';
+import { describeSgRule, fromWorld, sgLender, sgOwners, sourceLabel } from '../../engine/net/sg';
 import { allSubnets, effectiveRoutes, findSubnet, PREFIX_LISTS, subnetPublicStatus, targetLabel, validTargets } from '../../engine/net/routing';
 import { useGame } from '../../store/game';
 
@@ -82,7 +82,7 @@ export function SgEditor({ sgId, ruleRef }: { sgId: string; ruleRef?: string }) 
       </div>
       {new Set(owners.map((o) => o.type)).size > 1 && (
         <p className="warn-note">
-          ⚠ {sg.name} is worn by different tiers ({owners.map((o) => o.name).join(', ')}). Each of them accepts everything this group allows{sg.inbound.some((r) => 'cidr' in r.source && r.source.cidr === '0.0.0.0/0') ? ', including traffic from the whole internet' : ''}. To let one tier reach another, add a rule whose <i>source</i> is the other tier's group instead of sharing the group.
+          ⚠ {sg.name} is worn by different tiers ({owners.map((o) => o.name).join(', ')}). Each of them accepts everything this group allows{sg.inbound.some(fromWorld) ? ', including traffic from the whole internet' : ''}. To let one tier reach another, add a rule whose <i>source</i> is the other tier's group instead of sharing the group.
         </p>
       )}
       <div className="hint" style={{ marginTop: 6 }}>Inbound</div>
@@ -452,14 +452,14 @@ export function ComponentNetworking({ c }: { c: Component }) {
             The groups {c.name} wears: their inbound rules decide what reaches it. To let another tier in, don't attach that tier's group here; add a rule to {c.name}'s own group with the other group as the <i>source</i>.
           </p>
           {sgs.map((sg) => {
-            const wornBy = Object.values(board.components).filter((o) => o.id !== c.id && o.securityGroupIds?.includes(sg.id));
-            const borrowed = c.securityGroupIds![0] !== sg.id && wornBy.some((o) => o.securityGroupIds![0] === sg.id) && c.securityGroupIds!.includes(sg.id);
+            const wornBy = sgOwners(board, sg.id).filter((o) => o.id !== c.id);
+            const lender = c.securityGroupIds!.includes(sg.id) ? sgLender(board, c, sg.id) : undefined;
             return (
-            <label key={sg.id} className={`field ${borrowed ? 'borrowed' : ''}`}>
+            <label key={sg.id} className={`field ${lender ? 'borrowed' : ''}`}>
               <span>
                 {sg.name} <span className="hint">{sg.inbound.map((r) => describeSgRule(board, r)).join('; ') || 'no inbound rules'}</span>
                 {wornBy.length > 0 && <span className="hint"> · also on {wornBy.map((o) => o.name).join(', ')}</span>}
-                {borrowed && <div className="warn-note">⚠ This is {wornBy.find((o) => o.securityGroupIds![0] === sg.id)!.name}'s group. Wearing it, {c.name} accepts everything {wornBy.find((o) => o.securityGroupIds![0] === sg.id)!.name} accepts.</div>}
+                {lender && <div className="warn-note">⚠ This is {lender.name}'s group. Wearing it, {c.name} accepts everything {lender.name} accepts.</div>}
               </span>
               <input
                 type="checkbox"
