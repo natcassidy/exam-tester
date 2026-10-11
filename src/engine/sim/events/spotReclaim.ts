@@ -58,6 +58,8 @@ export const spotReclaim: EventHandler = (board, ev) => {
       : 'Spot is cheap because it can be taken back. Allow several instance types (more pools), use capacity-optimized or price-capacity-optimized allocation, and keep an On-Demand base sized to what you can never lose.',
     highlight: ok ? [] : [asg.id],
     fixTarget: asg.id,
+    fixHint: `Open ${asg.name}: under "Mix Spot and On-Demand", raise the "On-Demand base" to the capacity you can never lose, allow several instance types, and set "Spot allocation strategy" to price-capacity-optimized.`,
+    fixFocus: { tab: 'config', label: 'Mix Spot and On-Demand' },
     metrics: { floor, lost },
   });
 };

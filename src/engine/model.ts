@@ -698,8 +698,26 @@ export interface TimelineSeries {
   marks?: { min: number; label: string }[];
 }
 
+/** Where on an object's console a fix is made: the tab, and the field label or section heading to point at. */
+export interface FixFocus {
+  tab?: 'config' | 'networking' | 'permissions';
+  /** Text a field label or section heading starts with (case-insensitive), e.g. "Publicly accessible". */
+  label: string;
+}
+
+/** One concrete fix: the object to open, what to change there, and where. */
+export interface FixPointer {
+  /** Component, subnet, SG, NACL, route table, role or key id. Absent when the fix is to place something new. */
+  target?: string;
+  /** What to change, in one imperative sentence that names the objects on the player's board. */
+  hint: string;
+  focus?: FixFocus;
+  /** Rule to highlight when the target is an SG, NACL or route table (same format as trace rule refs). */
+  ruleRef?: string;
+}
+
 export interface EventDetail {
-  lines: { label: string; value: string; status?: 'pass' | 'warn' | 'fail' }[];
+  lines: { label: string; value: string; status?: 'pass' | 'warn' | 'fail'; fix?: FixPointer }[];
   lineItems?: CostLineItem[];
 }
 
@@ -713,6 +731,12 @@ export interface EventResult {
   highlight: ComponentId[];
   /** Object to open with "Fix it" (component, subnet, SG, NACL or route table id). */
   fixTarget?: string;
+  /** What to change at fixTarget, in one imperative sentence. Falls back to the lesson when absent. */
+  fixHint?: string;
+  /** Where on fixTarget's console to make the change. */
+  fixFocus?: FixFocus;
+  /** Rule to highlight when fixTarget is an SG, NACL or route table. */
+  fixRuleRef?: string;
   /** Failed because a component the event needs isn't on the board yet (nothing to test). */
   incomplete?: boolean;
   trace?: Trace;

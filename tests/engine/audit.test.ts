@@ -19,14 +19,24 @@ describe('privateTierSgsChained', () => {
     if (!r.ok) throw new Error(r.error);
     const f = rule.check(r.board);
     expect(f.status).toBe('fail');
-    expect(f.fixTarget).toBe(asg.id);
-    expect(f.message).toMatch(/Untick alb-sg on app-asg/);
+    expect(f.fix?.target).toBe(asg.id);
+    expect(f.fix?.focus).toEqual({ tab: 'networking', label: 'Security groups attached' });
+    expect(f.fix?.hint).toMatch(/untick alb-sg/);
+    expect(f.message).toMatch(/app-asg has the load balancer's security group \(alb-sg\) attached/);
   });
 
-  it("points at the SG when the tier's own group is opened to the world", () => {
+  it("points at the open rule when the tier's own group allows the world, and names the group to use instead", () => {
     const bad = ledgerly.mistakes.find((m) => m.name === 'App security group open to 0.0.0.0/0')!.board;
     const f = rule.check(bad);
     expect(f.status).toBe('fail');
-    expect(bad.securityGroups[f.fixTarget!]?.name).toBe('app-sg');
+    expect(bad.securityGroups[f.fix!.target!]?.name).toBe('app-sg');
+    expect(f.fix?.ruleRef).toMatch(/^inbound rule #\d+$/);
+    expect(f.fix?.hint).toMatch(/source alb-sg/);
+  });
+});
+
+describe('every audit rule', () => {
+  it('explains why it exists', () => {
+    for (const r of Object.values(AUDIT_RULES)) expect(r.why.length, r.id).toBeGreaterThan(20);
   });
 });

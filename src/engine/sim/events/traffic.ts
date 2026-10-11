@@ -1,9 +1,10 @@
-import type { ConfigOf } from '../../model';
+import type { ConfigOf, FixPointer } from '../../model';
 import { traceFlow, failingHop } from '../../net/trace';
 import { resolveRef } from '../../select';
 import { INSTANCE_RPS_AT_70 } from '../../cost/pricing';
 import { demandAt, primaryDbUtil, ProfilePoint, simulateAsg, simulateSyncLambda } from '../capacity';
-import { EventHandler, result } from './context';
+import { fixFromHop } from '../../net/fixHints';
+import { EventHandler, fixFields, result } from './context';
 
 export interface TrafficParams {
   entry: string; // 'alb' | 'apigw'
@@ -28,10 +29,10 @@ export const traffic: EventHandler = (board, ev) => {
     const reach = traceFlow(board, { from: 'internet', to: entry.id, protocol: 'tcp', port: entry.config.listener.port });
     if (reach.result === 'dropped') {
       const bad = failingHop(reach);
-      return result(ev, { status: 'fail', summary: `100% errors: requests never reach a healthy target. ${bad?.explain ?? ''}`, lesson: 'Fix reachability first; capacity only matters once traffic flows.', highlight: [entry.id], fixTarget: bad?.matched?.objectId ?? bad?.at.id, trace: reach });
+      return result(ev, { status: 'fail', summary: `100% errors: requests never reach a healthy target. ${bad?.explain ?? ''}`, lesson: 'Fix reachability first; capacity only matters once traffic flows.', highlight: [entry.id], ...fixFields(fixFromHop(board, bad)), trace: reach });
     }
     const target = entry.config.targetId ? board.components[entry.config.targetId] : undefined;
-    if (!target || target.config.type !== 'asg') return result(ev, { status: 'fail', summary: 'The load balancer target is not an Auto Scaling group, so nothing can scale.', lesson: 'Put the app tier in an Auto Scaling group.', highlight: [entry.id] });
+    if (!target || target.config.type !== 'asg') return result(ev, { status: 'fail', summary: 'The load balancer target is not an Auto Scaling group, so nothing can scale.', lesson: 'Put the app tier in an Auto Scaling group.', highlight: [entry.id], fixTarget: entry.id, fixHint: `Place an Auto Scaling group in the private app subnets, then set ${entry.name}'s "Target group" to it.`, fixFocus: { tab: 'config', label: 'Target group' } });
     const cfg = target.config;
     const sim = simulateAsg(cfg, p.profile, p.durationMin, { baseLatencyMs: p.baseLatencyMs });
     let dbErrors = 0;
@@ -60,11 +61,23 @@ export const traffic: EventHandler = (board, ev) => {
     ] as { label: string; value: string; status?: 'pass' | 'fail' }[];
     if (p.db && db) lines.push({ label: 'Peak DB load', value: pct(peakDb), status: peakDb <= 1 ? 'pass' : 'fail' });
     let lesson = 'Target tracking added capacity ahead of the surge, and warmup was covered by headroom.';
+    let fix: FixPointer | undefined;
     if (!ok) {
-      if (sim.maxInstances >= cfg.max && errorRate > p.slo.errorRate) lesson = `The group hit its max capacity (${cfg.max}). ${peak} rps needs about ${Math.ceil(peak / INSTANCE_RPS_AT_70[cfg.instanceType])} instances at 70% CPU. Raise max.`;
-      else if (cfg.policy.kind === 'none') lesson = 'No scaling policy: the group never grows. Add target tracking on CPU.';
-      else lesson = `New instances only serve after ~60s boot + ${cfg.warmupSec}s warmup. Keep more headroom (a lower target CPU or higher minimum) or scale earlier (scheduled scaling for a known event).`;
-      if (p.db && db && peakDb > 1) lesson = `The database is the bottleneck (${pct(peakDb)} of ${db.label} capacity). Add read replicas for reads or a larger instance class.`;
+      const need = Math.ceil(peak / INSTANCE_RPS_AT_70[cfg.instanceType]);
+      if (sim.maxInstances >= cfg.max && errorRate > p.slo.errorRate) {
+        lesson = `The group hit its max capacity (${cfg.max}). ${peak} rps needs about ${need} instances at 70% CPU. Raise max.`;
+        fix = { target: target.id, hint: `Open ${target.name} and raise "Maximum" to at least ${need}.`, focus: { tab: 'config', label: 'Maximum' } };
+      } else if (cfg.policy.kind === 'none') {
+        lesson = 'No scaling policy: the group never grows. Add target tracking on CPU.';
+        fix = { target: target.id, hint: `Open ${target.name} and set "Scaling policy" to Target tracking (CPU).`, focus: { tab: 'config', label: 'Scaling policy' } };
+      } else {
+        lesson = `New instances only serve after ~60s boot + ${cfg.warmupSec}s warmup. Keep more headroom (a lower target CPU or higher minimum) or scale earlier (scheduled scaling for a known event).`;
+        fix = { target: target.id, hint: `Open ${target.name} and add headroom: lower the "Target CPU", raise "Minimum", or shorten "Instance warmup".`, focus: { tab: 'config', label: cfg.policy.kind === 'targetTracking' ? 'Target CPU' : 'Minimum' } };
+      }
+      if (p.db && db && peakDb > 1) {
+        lesson = `The database is the bottleneck (${pct(peakDb)} of ${db.label} capacity). Add read replicas for reads or a larger instance class.`;
+        fix = { target: db.id, hint: `Open ${board.components[db.id]?.name ?? 'the database'} and add "Read replicas" for the reads, or pick a larger "Instance class".`, focus: { tab: 'config', label: 'Read replicas' } };
+      }
     }
     return result(ev, {
       status: ok ? 'pass' : 'fail',
@@ -72,7 +85,7 @@ export const traffic: EventHandler = (board, ev) => {
       detail: { lines },
       lesson,
       highlight: ok ? [] : [p.db && db && peakDb > 1 ? db.id : target.id],
-      fixTarget: p.db && db && peakDb > 1 ? db.id : target.id,
+      ...fixFields(fix),
       timeline: { points: sim.points, marks: sim.marks },
       metrics: { errorRate, p95: sim.maxP95, peakInstances: sim.maxInstances },
     });
@@ -81,7 +94,7 @@ export const traffic: EventHandler = (board, ev) => {
   if (entry.config.type === 'apigw') {
     const integ = entry.config.integration;
     const target = integ.targetId ? board.components[integ.targetId] : undefined;
-    if (!target) return result(ev, { status: 'fail', summary: `${entry.name} has no integration target. Every request returns 500.`, lesson: 'Point the API at a backend.', highlight: [entry.id], fixTarget: entry.id });
+    if (!target) return result(ev, { status: 'fail', summary: `${entry.name} has no integration target. Every request returns 500.`, lesson: 'Point the API at a backend.', highlight: [entry.id], fixTarget: entry.id, fixHint: `Open ${entry.name} and pick an "Integration target".`, fixFocus: { tab: 'config', label: 'Integration target' } });
     const throttle = entry.config.throttleRps;
     if (integ.kind === 'sqs' && target.type === 'sqs') {
       const points = Array.from({ length: p.durationMin }, (_, m) => {
@@ -117,11 +130,15 @@ export const traffic: EventHandler = (board, ev) => {
         lesson,
         highlight: ok ? [] : [target.id, entry.id],
         fixTarget: entry.id,
+        fixHint: sim.timedOut
+          ? `Make the work asynchronous: drag an SQS queue into Regional services, set ${entry.name}'s "Integration" to SQS with the queue as target, and make the worker Lambda consume the queue.`
+          : `Buffer the spike: put an SQS queue between ${entry.name} and ${target.name} (set the integration to SQS), so bursts wait in the queue instead of being throttled.`,
+        fixFocus: { tab: 'config', label: 'Integration' },
         timeline: { points: sim.points },
         metrics: { errorRate, p95: sim.maxP95, peakConcurrency: sim.peakConcurrency },
       });
     }
-    return result(ev, { status: 'fail', summary: `${entry.name}'s integration type doesn't match its target.`, lesson: 'Pick a Lambda or SQS integration and a matching target.', highlight: [entry.id], fixTarget: entry.id });
+    return result(ev, { status: 'fail', summary: `${entry.name}'s integration type doesn't match its target.`, lesson: 'Pick a Lambda or SQS integration and a matching target.', highlight: [entry.id], fixTarget: entry.id, fixHint: `Open ${entry.name} and make "Integration" and "Integration target" match (Lambda → a function, SQS → a queue).`, fixFocus: { tab: 'config', label: 'Integration' } });
   }
   return result(ev, { status: 'fail', summary: `${entry.name} can't receive traffic in this model.`, lesson: '', highlight: [entry.id] });
 };

@@ -1,4 +1,4 @@
-import type { Board, EventResult, EventSpec, UsageProfile } from '../../model';
+import type { Board, EventResult, EventSpec, FixPointer, UsageProfile } from '../../model';
 
 export interface SimContext {
   budget: number;
@@ -19,3 +19,9 @@ export const fmtSec = (s: number) => {
 };
 
 export const fmtUsd = (n: number) => `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/** Spread a fix pointer into an event result's fix fields. */
+export function fixFields(fix: FixPointer | undefined): Pick<EventResult, 'fixTarget' | 'fixHint' | 'fixFocus' | 'fixRuleRef'> {
+  if (!fix) return {};
+  return { fixTarget: fix.target, fixHint: fix.hint, fixFocus: fix.focus, fixRuleRef: fix.ruleRef };
+}

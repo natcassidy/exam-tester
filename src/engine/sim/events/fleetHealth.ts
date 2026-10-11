@@ -1,9 +1,10 @@
-import type { ConfigOf, TimelinePoint } from '../../model';
+import type { ConfigOf, FixPointer, TimelinePoint } from '../../model';
 import { INSTANCE_RPS_AT_70 } from '../../cost/pricing';
 import { failingHop, traceFlow } from '../../net/trace';
 import { resolveRef } from '../../select';
 import { p95Latency } from '../capacity';
-import { EventHandler, result } from './context';
+import { fixFromHop } from '../../net/fixHints';
+import { EventHandler, fixFields, result } from './context';
 
 export interface FleetHealthParams {
   entry: string; // the load balancer ref
@@ -37,11 +38,11 @@ export const fleetHealth: EventHandler = (board, ev) => {
   const alb = resolveRef(board, p.entry);
   if (!alb || alb.config.type !== 'alb') return result(ev, { status: 'fail', incomplete: true, summary: 'No load balancer on the board.', lesson: 'Place the entry point first.', highlight: [] });
   const target = alb.config.targetId ? board.components[alb.config.targetId] : undefined;
-  if (!target || target.config.type !== 'asg') return result(ev, { status: 'fail', summary: `${alb.name}'s target is not an Auto Scaling group.`, lesson: 'Register an Auto Scaling group as the target.', highlight: [alb.id], fixTarget: alb.id });
+  if (!target || target.config.type !== 'asg') return result(ev, { status: 'fail', summary: `${alb.name}'s target is not an Auto Scaling group.`, lesson: 'Register an Auto Scaling group as the target.', highlight: [alb.id], fixTarget: alb.id, fixHint: `Open ${alb.name} and set "Target group" to an Auto Scaling group.`, fixFocus: { tab: 'config', label: 'Target group' } });
   const reach = traceFlow(board, { from: 'internet', to: alb.id, protocol: 'tcp', port: alb.config.listener.port });
   if (reach.result === 'dropped') {
     const bad = failingHop(reach);
-    return result(ev, { status: 'fail', summary: `Requests never reach the fleet: ${bad?.explain ?? 'no path.'}`, lesson: 'Fix reachability first.', highlight: [alb.id], fixTarget: bad?.matched?.objectId ?? bad?.at.id, trace: reach });
+    return result(ev, { status: 'fail', summary: `Requests never reach the fleet: ${bad?.explain ?? 'no path.'}`, lesson: 'Fix reachability first.', highlight: [alb.id], ...fixFields(fixFromHop(board, bad)), trace: reach });
   }
   const hc = alb.config.healthCheck;
   const cfg = target.config as ConfigOf<'asg'>;
@@ -106,20 +107,25 @@ export const fleetHealth: EventHandler = (board, ev) => {
   ] as { label: string; value: string; status?: 'pass' | 'fail' }[];
   if (failOpenMins) lines.push({ label: 'Fail-open minutes', value: `${failOpenMins} (no healthy target, so the ALB routed to every registered target)` });
 
+  let fix: FixPointer | undefined;
   let lesson = 'Unhealthy targets are detected and replaced; the fleet stays at full strength.';
   let summary = `Fleet healthy: ${healthyEnd}/${cfg.desired} targets, ${pct(errorRate)} errors.`;
   if (!pathOk) {
     summary = `Target group 0/${cfg.desired} healthy: health checks request ${hc.path}, the app serves ${cfg.app.healthPath}.${cfg.healthCheckType === 'ELB' ? ` Auto Scaling replaced ${replacements} instances in ${p.durationMin} min and users saw ${pct(errorRate)} errors.` : ' The ALB is failing open, so traffic still flows, but health checks protect nothing.'}`;
     lesson = `Every target fails the health check because of the path, not the app. ${cfg.healthCheckType === 'ELB' ? 'With ELB health checks, Auto Scaling terminates each "unhealthy" instance after the grace period, so the fleet churns and capacity keeps dropping to zero (HTTP 503 when nothing is registered).' : ''} Fix the health check path on the target group.`;
+    fix = { target: alb.id, hint: `Open ${alb.name} and set the health check "Path" to ${cfg.app.healthPath}, the path the app actually serves.`, focus: { tab: 'config', label: 'Path' } };
   } else if (zombies) {
     summary = `${zombies} zombie instance(s) stay InService with a dead app: ${healthyEnd}/${cfg.desired} healthy, ${pct(errorRate)} errors.`;
     lesson = `The ALB stopped sending traffic to the crashed instances, but the Auto Scaling group uses ${cfg.healthCheckType} health checks, which only look at the instance status. It never replaces them. Use ELB health checks so the group acts on what the load balancer sees.`;
+    fix = { target: target.id, hint: `Open ${target.name} and set "Health check type" to ELB.`, focus: { tab: 'config', label: 'Health check type' } };
   } else if (replacements > (p.crashed ?? 0)) {
     summary = `Replacement loop: ${replacements} instances terminated in ${p.durationMin} min. ${pct(errorRate)} errors.`;
     lesson = `New instances are killed before the app finishes booting: the health check grace period (${cfg.healthCheckGraceSec}s) is shorter than boot + app start (~${60 + p.appBootSec}s). Set the grace period longer than the startup time.`;
+    fix = { target: target.id, hint: `Open ${target.name} and raise "Health check grace" above ~${60 + p.appBootSec}s (boot plus app start).`, focus: { tab: 'config', label: 'Health check grace' } };
   } else if (!ok) {
     summary = `${pct(errorRate)} errors while the fleet recovered.`;
     lesson = 'Recovery is too slow for the error budget. Shorten detection (interval × unhealthy threshold) or carry more headroom.';
+    fix = { target: alb.id, hint: `Open ${alb.name} and shorten detection: a lower health check "Interval" or "Unhealthy threshold". Or raise ${target.name}'s desired capacity for headroom.`, focus: { tab: 'config', label: 'Interval' } };
   }
   return result(ev, {
     status: ok ? 'pass' : 'fail',
@@ -127,7 +133,7 @@ export const fleetHealth: EventHandler = (board, ev) => {
     detail: { lines },
     lesson,
     highlight: ok ? [] : [pathOk ? target.id : alb.id],
-    fixTarget: pathOk ? target.id : alb.id,
+    ...(ok ? {} : fixFields(fix ?? { target: pathOk ? target.id : alb.id, hint: lesson })),
     timeline: { points, marks },
     metrics: { errorRate, healthyEnd, replacements },
   });

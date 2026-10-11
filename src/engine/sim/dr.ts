@@ -2,12 +2,13 @@
 // Region. RPO comes from how data reaches the DR Region. The result also names the DR strategy
 // the board implements (backup and restore, pilot light, warm standby, multi-site active/active).
 
-import type { Board, Component, ConfigOf, Trace } from '../model';
+import type { Board, Component, ConfigOf, FixPointer, Trace } from '../model';
 import { clone, componentsOfType, regionOf } from '../board';
 import { INSTANCE_RPS_AT_70 } from '../cost/pricing';
 import { detectionSec, effectiveTtl, policyOf, resolveDns } from '../net/dns';
 import { regionName } from '../net/geo';
 import { failingHop, traceFlow } from '../net/trace';
+import { fixFromHop } from '../net/fixHints';
 import { resolveRef } from '../select';
 import { readyDelayMin } from './capacity';
 import { rdsRestoreMinutes, type TierOutcome } from './failure';
@@ -64,6 +65,13 @@ function backupFor(board: Board, store: Component, failed: string): ConfigOf<'ba
   return componentsOfType(board, 'backup').find((b) => b.config.resourceIds.includes(store.id) && b.config.copyRegion && b.config.copyRegion !== failed)?.config;
 }
 
+/** Continuous cross-Region replication for a data store: the fix when backups or nothing at all leave the RPO too high. */
+function replicateFix(store: Component): FixPointer {
+  if (store.type === 'aurora') return { target: store.id, hint: `Drag an Aurora cluster into the DR Region and set its "Global Database secondary of" to ${store.name}.` };
+  if (store.type === 'dynamodb') return { target: store.id, hint: `Open ${store.name} and tick the DR Region under "Global table replicas".`, focus: { tab: 'config', label: 'Global table replicas' } };
+  return { target: store.id, hint: `Drag an RDS database into the DR Region's data subnets and set its "Read replica of" to ${store.name} (a cross-Region read replica you can promote).` };
+}
+
 /** How a data store in the failed Region recovers. */
 function dataTier(board: Board, store: Component, failed: string): TierOutcome & { mode: DataMode } {
   const cfg = store.config;
@@ -76,6 +84,7 @@ function dataTier(board: Board, store: Component, failed: string): TierOutcome &
     status: 'warn',
     mode: 'backup',
     explain: `${store.name}: AWS Backup copies a recovery point to ${backup!.copyRegion} every ${backup!.frequencyHours} h. Recovery is a ${what} (~${Math.round(restoreSec / 60)} min), and everything written since the last copy is lost (RPO up to ${backup!.frequencyHours} h).`,
+    fix: replicateFix(store),
   });
   const lost = (extra = ''): TierOutcome & { mode: DataMode } => ({
     tier: 'Data',
@@ -85,6 +94,7 @@ function dataTier(board: Board, store: Component, failed: string): TierOutcome &
     status: 'fail',
     mode: 'none',
     explain: `${store.name} only exists in ${failed}. Nothing replicates or copies it to another Region, so the data is unavailable until the Region recovers, or gone.${extra}`,
+    fix: replicateFix(store),
   });
 
   if (cfg.type === 'rds') {
@@ -145,7 +155,14 @@ export function computeRegionOutage(board: Board, p: RegionOutageParams): Region
   let active = false;
 
   if (!dns || dns.config.type !== 'route53') {
-    tiers.push({ tier: 'DNS', rtoSec: Infinity, rpoSec: 0, status: 'fail', explain: 'There is no Route 53 record in front of the application, so users keep going to the dead Region. Something has to move them.' });
+    tiers.push({
+      tier: 'DNS',
+      rtoSec: Infinity,
+      rpoSec: 0,
+      status: 'fail',
+      explain: 'There is no Route 53 record in front of the application, so users keep going to the dead Region. Something has to move them.',
+      fix: { hint: 'Drag Route 53 into the Global edge, then give it a failover (or latency) routing policy with health checks pointing at the entry point in each Region.' },
+    });
   } else {
     const cfg = dns.config;
     const policy = policyOf(cfg);
@@ -156,10 +173,10 @@ export function computeRegionOutage(board: Board, p: RegionOutageParams): Region
     const tRegion = target ? regionOf(board, target) : undefined;
     const wasHere = before.targetId ? regionOf(board, board.components[before.targetId]) === failed : true;
     if (!target) {
-      tiers.push({ tier: 'DNS', componentId: dns.id, rtoSec: Infinity, rpoSec: 0, status: 'fail', explain: after.explain });
+      tiers.push({ tier: 'DNS', componentId: dns.id, rtoSec: Infinity, rpoSec: 0, status: 'fail', explain: after.explain, fix: { target: dns.id, hint: `Open ${dns.name} and give it a record target in a Region that survives (with a routing policy that can fail over to it).`, focus: { tab: 'config', label: 'Routing policy' } } });
     } else if (tRegion === failed) {
       const why = policy === 'simple' ? `Simple routing has no health checks: ${cfg.recordName} keeps pointing at ${target.name} until someone edits the record by hand.` : `${after.explain} Without a health check (or Evaluate Target Health on the alias), Route 53 never notices the Region is down.`;
-      tiers.push({ tier: 'DNS', componentId: dns.id, rtoSec: Infinity, rpoSec: 0, status: 'fail', explain: why });
+      tiers.push({ tier: 'DNS', componentId: dns.id, rtoSec: Infinity, rpoSec: 0, status: 'fail', explain: why, fix: { target: dns.id, hint: `Open ${dns.name}, pick a routing policy that fails over (failover, latency or weighted) and make sure health checks (or Evaluate Target Health) watch each Region.`, focus: { tab: 'config', label: 'Routing policy' } } });
     } else {
       drRegion = tRegion;
       const detect = wasHere ? detectionSec(cfg) : 0;
@@ -183,7 +200,7 @@ export function computeRegionOutage(board: Board, p: RegionOutageParams): Region
         const a = asg.config;
         const needed = neededInstances(a, p.loadRps);
         if (a.max < needed) {
-          tiers.push({ tier: 'Compute', componentId: asg.id, rtoSec: Infinity, rpoSec: 0, status: 'fail', explain: `${asg.name} in ${tRegion} needs ${needed} × ${a.instanceType} to carry ${p.loadRps} rps, but its maximum is ${a.max}.` });
+          tiers.push({ tier: 'Compute', componentId: asg.id, rtoSec: Infinity, rpoSec: 0, status: 'fail', explain: `${asg.name} in ${tRegion} needs ${needed} × ${a.instanceType} to carry ${p.loadRps} rps, but its maximum is ${a.max}.`, fix: { target: asg.id, hint: `Open ${asg.name} (in ${tRegion}) and raise "Maximum" to at least ${needed}.`, focus: { tab: 'config', label: 'Maximum' } } });
           computeMode = a.desired === 0 ? 'off' : 'scaled-down';
         } else {
           if (a.desired >= needed) {
@@ -200,7 +217,15 @@ export function computeRegionOutage(board: Board, p: RegionOutageParams): Region
             computeExplain = `${asg.name} is scaled to zero. Launching ${needed} instances from nothing (start the fleet, bootstrap from the AMI, register with the load balancer, ${a.warmupSec}s warmup) takes ~${Math.round(computeReady / 60)} min.`;
           }
           a.desired = Math.max(a.desired, Math.min(needed, a.max));
-          tiers.push({ tier: 'Compute', componentId: asg.id, rtoSec: computeReady, rpoSec: 0, status: computeMode === 'full' ? 'pass' : 'warn', explain: computeExplain });
+          tiers.push({
+            tier: 'Compute',
+            componentId: asg.id,
+            rtoSec: computeReady,
+            rpoSec: 0,
+            status: computeMode === 'full' ? 'pass' : 'warn',
+            explain: computeExplain,
+            fix: computeMode === 'full' ? undefined : { target: asg.id, hint: `Open ${asg.name} (in ${tRegion}) and keep more instances running: raise "Desired" (up to ${needed} for a warm standby that needs no scale-out).`, focus: { tab: 'config', label: 'Desired' } },
+          });
         }
       } else if (['apigw', 'lambda', 'cloudfront', 's3'].includes(target.type)) {
         computeMode = 'full';
@@ -209,14 +234,14 @@ export function computeRegionOutage(board: Board, p: RegionOutageParams): Region
         computeMode = 'full';
         tiers.push({ tier: 'Compute', componentId: target.config.targetId, rtoSec: 0, rpoSec: 0, status: 'pass', explain: `An instance is already running behind ${target.name}.` });
       } else {
-        tiers.push({ tier: 'Compute', componentId: target.id, rtoSec: Infinity, rpoSec: 0, status: 'fail', explain: `${target.name} in ${tRegion} has nothing behind it to serve requests.` });
+        tiers.push({ tier: 'Compute', componentId: target.id, rtoSec: Infinity, rpoSec: 0, status: 'fail', explain: `${target.name} in ${tRegion} has nothing behind it to serve requests.`, fix: { target: target.id, hint: `Place an Auto Scaling group in ${tRegion}'s private subnets and make it ${target.name}'s target.` } });
       }
 
       // The DR path has to actually work: internet → entry → app tier, and app tier → database.
       trace = traceFlow(scaled, { from: 'internet', to: dns.id, protocol: 'tcp', port: 443, clientCity: city }, { failedRegions: [failed] });
       if (trace.result === 'dropped') {
         const bad = failingHop(trace);
-        tiers.push({ tier: 'DR path', componentId: bad?.at.kind === 'component' ? bad.at.id : target.id, rtoSec: Infinity, rpoSec: 0, status: 'fail', explain: `Users can't reach the application in ${tRegion}: ${bad?.explain ?? 'the request was dropped.'}` });
+        tiers.push({ tier: 'DR path', componentId: bad?.at.kind === 'component' ? bad.at.id : target.id, rtoSec: Infinity, rpoSec: 0, status: 'fail', explain: `Users can't reach the application in ${tRegion}: ${bad?.explain ?? 'the request was dropped.'}`, fix: fixFromHop(scaled, bad) });
       }
       const drDb = Object.values(scaled.components).find((c) => regionOf(scaled, c) === tRegion && (c.type === 'rds' || c.type === 'aurora'));
       if (asg && drDb && trace.result === 'delivered') {
@@ -224,7 +249,7 @@ export function computeRegionOutage(board: Board, p: RegionOutageParams): Region
         const t = traceFlow(scaled, { from: asg.id, to: drDb.id, protocol: 'tcp', port }, { failedRegions: [failed] });
         if (t.result === 'dropped') {
           const bad = failingHop(t);
-          tiers.push({ tier: 'DR path', componentId: drDb.id, rtoSec: Infinity, rpoSec: 0, status: 'fail', explain: `The DR app tier can't reach ${drDb.name} on port ${port}: ${bad?.explain ?? 'dropped.'}` });
+          tiers.push({ tier: 'DR path', componentId: drDb.id, rtoSec: Infinity, rpoSec: 0, status: 'fail', explain: `The DR app tier can't reach ${drDb.name} on port ${port}: ${bad?.explain ?? 'dropped.'}`, fix: fixFromHop(scaled, bad) });
         }
       }
     }

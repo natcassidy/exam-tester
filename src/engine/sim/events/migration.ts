@@ -68,6 +68,7 @@ export const migration: EventHandler = (board, ev) => {
       lesson: ok ? 'Pick the transfer method from the arithmetic, not from habit.' : `When the network would take ${fmtDays(net)}, ship the data: a Snowball job moves tens of terabytes in about a week.`,
       highlight: ok ? [] : [(snow ?? ds)!.id],
       fixTarget: (snow ?? ds)?.id,
+      fixHint: ok ? undefined : snow ? `Open ${snow.name} and add devices so the job fits the deadline.` : `The network is too slow for ${tb} TB: drag a Snowball job into the on-premises zone and point it at the destination bucket.`,
       metrics: { days: best },
     });
   }
@@ -77,7 +78,7 @@ export const migration: EventHandler = (board, ev) => {
     const ds = componentsOfType(board, 'datasync').find((d) => d.config.destId);
     const snow = componentsOfType(board, 'snow')[0];
     const capGbDay = (bestNet * 1e6 * 86400) / 8 / 1e9;
-    if (!ds) return result(ev, { status: 'fail', summary: `${snow ? `While the Snowball devices are in transit (~${fmtDays(snowballDays(p.tb ?? 80, snow.config.type === 'snow' ? snow.config.devices : 1))}), users keep changing files (~${gb} GB/day).` : `Files keep changing (~${gb} GB/day).`} Nothing copies those changes, so the cut-over loses a week of work.`, detail: { lines: [] }, lesson: 'Combine offline and online: Snowball for the bulk, then DataSync incremental runs for what changed since.', highlight: snow ? [snow.id] : [], fixTarget: snow?.id });
+    if (!ds) return result(ev, { status: 'fail', summary: `${snow ? `While the Snowball devices are in transit (~${fmtDays(snowballDays(p.tb ?? 80, snow.config.type === 'snow' ? snow.config.devices : 1))}), users keep changing files (~${gb} GB/day).` : `Files keep changing (~${gb} GB/day).`} Nothing copies those changes, so the cut-over loses a week of work.`, detail: { lines: [] }, lesson: 'Combine offline and online: Snowball for the bulk, then DataSync incremental runs for what changed since.', highlight: snow ? [snow.id] : [], fixTarget: snow?.id, fixHint: 'Drag a DataSync task into the on-premises zone, point it at the destination bucket and give it a repeating schedule, so it copies what changed after the Snowball import.' });
     const ok = capGbDay >= gb && ds.config.type === 'datasync' && ds.config.schedule !== 'once';
     return result(ev, {
       status: ok ? 'pass' : 'fail',
@@ -90,6 +91,8 @@ export const migration: EventHandler = (board, ev) => {
       lesson: 'DataSync tasks compare source and destination and copy only the differences on every scheduled run.',
       highlight: ok ? [] : [ds.id],
       fixTarget: ds.id,
+      fixHint: ok ? undefined : ds.config.type === 'datasync' && ds.config.schedule === 'once' ? `Open ${ds.name} and set its "Schedule" to run repeatedly (hourly or daily) until cut-over.` : `Give ${ds.name} a faster link (a bigger Direct Connect port) so the daily changes fit.`,
+      fixFocus: { tab: 'config', label: 'Schedule' },
     });
   }
 
@@ -99,10 +102,10 @@ export const migration: EventHandler = (board, ev) => {
   const dms = componentsOfType(board, 'dms').find((d) => d.config.targetId);
   const lines = [{ label: 'Full copy', value: `${gb} GB over ${netLabel} at ${bestNet} Mbps ≈ ${fmtDays(transferDays(gb / 1000, bestNet))}.` }];
   if (!dms) return result(ev, { status: 'fail', summary: `Nothing migrates the ${gb} GB database while it keeps taking writes.`, detail: { lines }, lesson: 'AWS DMS copies the database (full load) and then replicates ongoing changes (CDC) until you cut over.', highlight: [] });
-  if (!usable.length) return result(ev, { status: 'fail', summary: `${dms.name} needs private connectivity to the source database, and no VPN or DX connection is ready before the deadline.`, detail: { lines }, lesson: 'Set up a Site-to-Site VPN for DMS to reach the on-premises database.', highlight: [dms.id], fixTarget: dms.id });
+  if (!usable.length) return result(ev, { status: 'fail', summary: `${dms.name} needs private connectivity to the source database, and no VPN or DX connection is ready before the deadline.`, detail: { lines }, lesson: 'Set up a Site-to-Site VPN for DMS to reach the on-premises database.', highlight: [dms.id], fixTarget: dms.id, fixHint: 'Drag a customer gateway and a Site-to-Site VPN into the on-premises zone, attach the VPN to a virtual private gateway on the VPC, and add the routes.' });
   if (dms.config.type === 'dms' && dms.config.mode === 'full-load') {
     const min = transferDays(gb / 1000, bestNet) * 24 * 60;
-    return result(ev, { status: 'fail', summary: `Full load only: writes must stop for the whole copy (~${fmtDays(min / 1440)}) or every change made during it is lost. Allowed downtime: ${maxMin} min.`, detail: { lines }, lesson: 'Use "full load and ongoing replication (CDC)": the source stays live until a short cut-over.', highlight: [dms.id], fixTarget: dms.id });
+    return result(ev, { status: 'fail', summary: `Full load only: writes must stop for the whole copy (~${fmtDays(min / 1440)}) or every change made during it is lost. Allowed downtime: ${maxMin} min.`, detail: { lines }, lesson: 'Use "full load and ongoing replication (CDC)": the source stays live until a short cut-over.', highlight: [dms.id], fixTarget: dms.id, fixHint: `Open ${dms.name} and set "Migration type" to full load and ongoing replication (CDC).`, fixFocus: { tab: 'config', label: 'Migration type' } });
   }
   return result(ev, { status: 'pass', summary: `${dms.name}: full load while the source stays live, then change data capture keeps the target in sync. Cut-over downtime ≈ ${DMS_CUTOVER_MIN} min (allowed ${maxMin}).`, detail: { lines }, lesson: 'DMS with CDC turns a database migration into a few minutes of downtime.', highlight: [] });
 };

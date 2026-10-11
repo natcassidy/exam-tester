@@ -65,6 +65,8 @@ export const commitment: EventHandler = (board, ev) => {
         : 'A commitment is paid whether you use it or not. If the workload will change family, Region or move to Lambda/Fargate, commit with a Compute Savings Plan, and size it to the lowest usage you are sure of.',
       highlight: ok ? [] : savingsIds,
       fixTarget: savingsIds[0],
+      fixHint: 'Switch the commitment to a Compute Savings Plan (it follows the workload across instance families, Regions, Fargate and Lambda) and lower the "Hourly commitment" to the baseline you are sure of.',
+      fixFocus: { tab: 'config', label: 'Commitment' },
       metrics,
     });
   }
@@ -77,6 +79,10 @@ export const commitment: EventHandler = (board, ev) => {
     lesson: ok ? 'Within target.' : commits.length ? 'Not enough is covered for long enough. A 3-year term discounts more than 1 year, and the commitment must cover the usage that will still be there.' : 'Steady 24/7 usage at On-Demand rates is the most expensive way to run it. Commit to the baseline.',
     highlight: ok ? [] : savingsIds,
     fixTarget: savingsIds[0],
+    fixHint: savingsIds.length
+      ? 'Cover more of the steady baseline: raise the "Hourly commitment" to the usage that will still be there, or pick the 3-year "Term".'
+      : 'Drag a Savings Plan from the palette into Regional services and commit to the steady 24/7 baseline.',
+    fixFocus: savingsIds.length ? { tab: 'config', label: 'Hourly commitment' } : undefined,
     metrics,
   });
 };

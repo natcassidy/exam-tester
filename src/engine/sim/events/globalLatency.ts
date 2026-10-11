@@ -46,6 +46,8 @@ export const globalLatency: EventHandler = (board, ev) => {
       lesson: 'A read-heavy hot key needs a cache in front of the table: DynamoDB Accelerator (DAX) for DynamoDB.',
       highlight: ok ? [] : [table.id],
       fixTarget: table.id,
+      fixHint: `Open ${table.name} and turn on "DAX cluster in front of the table" so the hot item is served from the cache.`,
+      fixFocus: { tab: 'config', label: 'DAX cluster' },
     });
   }
 
@@ -94,6 +96,10 @@ export const globalLatency: EventHandler = (board, ev) => {
     lesson: ok ? 'Serve each player from the nearest Region, with the data in that Region too.' : 'Latency-based routing sends players to the closest healthy Region; DynamoDB global tables put a writable replica of the data there.',
     highlight: ok ? [] : [dns?.id ?? table.id],
     fixTarget: dns?.id ?? table.id,
+    fixHint: dns
+      ? `Run the app in a Region near ${CITIES[worstCity]?.label ?? worstCity}, set ${dns.name}'s "Routing policy" to latency-based across the Regions, and tick those Regions under ${table.name}'s "Global table replicas" so the data is local too.`
+      : `Drag Route 53 into the Global edge with latency-based routing to an entry point in each Region, and add the Regions as global table replicas of ${table.name}.`,
+    fixFocus: dns ? { tab: 'config', label: 'Routing policy' } : undefined,
     metrics: { latencyMs: worst },
   });
 };

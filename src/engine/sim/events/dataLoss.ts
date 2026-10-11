@@ -118,6 +118,14 @@ function dbWays(board: Board, db: Component, p: DataLossParams): Way[] {
   return ways;
 }
 
+const SCENARIO_FIX: Record<DataLossScenario, { s3: string; db: string }> = {
+  'accidental-delete': { s3: 'turn on "Versioning" so a delete only adds a delete marker you can remove', db: 'set "Backup retention" above 0 days (point-in-time recovery), or add an AWS Backup plan' },
+  'malicious-delete': { s3: 'turn on "Object Lock" in compliance mode (or copy backups to a vault in a separate account with "Vault Lock") so even an admin cannot delete', db: 'copy backups with AWS Backup to a vault in a separate account with Vault Lock, so stolen admin credentials cannot delete them' },
+  'early-delete': { s3: 'turn on "Object Lock" with a "Default retention" that covers the retention period', db: 'protect the backups with AWS Backup Vault Lock' },
+  'region-loss': { s3: 'replicate the bucket to another Region ("Destination bucket" for cross-Region replication)', db: 'copy backups to another Region ("Copy to Region") or add a cross-Region replica' },
+  corruption: { s3: 'turn on "Versioning" so you can restore the version from before the bad write', db: 'turn on point-in-time recovery (backup retention above 0, or "Point-in-time recovery" for DynamoDB)' },
+};
+
 const SCENARIO_LABEL: Record<DataLossScenario, string> = {
   'accidental-delete': 'Accidental deletion',
   'malicious-delete': 'Insider with stolen admin credentials deletes everything',
@@ -142,6 +150,11 @@ export const dataLoss: EventHandler = (board, ev) => {
     lesson: ok ? best.line : (ways.find((w) => !w.ok)?.line ?? 'Nothing protects this data.'),
     highlight: ok ? [] : [target.id],
     fixTarget: target.id,
+    fixHint: ok
+      ? undefined
+      : best && !rpoOk
+        ? `${best.line} That is too old: pick a protection with a lower RPO, e.g. ${SCENARIO_FIX[p.scenario][target.type === 's3' ? 's3' : 'db']}.`
+        : `Open ${target.name} and ${SCENARIO_FIX[p.scenario][target.type === 's3' ? 's3' : 'db']}.`,
     metrics: { rpoSec: best?.rpoSec ?? Infinity },
   });
 };
