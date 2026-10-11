@@ -2,7 +2,8 @@ import type { RequestContext } from '../../iam/types';
 import { iamOf, traceCall } from '../../iam/access';
 import { failingHop } from '../../net/trace';
 import { resolveRef } from '../../select';
-import { EventHandler, result } from './context';
+import { fixFromHop } from '../../net/fixHints';
+import { EventHandler, fixFields, result } from './context';
 
 export interface IamAccessParams {
   /** "role:<name>" / "user:<name>" for people and roles, or a component ref ("lambda:api", "asg"). */
@@ -41,7 +42,6 @@ export const iamAccess: EventHandler = (board, ev) => {
   const bad = failingHop(t);
   const iamHops = t.hops.filter((h) => h.check === 'iam');
   const lastIam = iamHops[iamHops.length - 1];
-  const fixTarget = bad?.matched?.objectId ?? bad?.at.id;
   const who = p.label?.principal ?? p.principal;
   if (p.expect === 'deny') {
     if (t.result === 'dropped')
@@ -52,6 +52,8 @@ export const iamAccess: EventHandler = (board, ev) => {
       lesson: 'An allow is broader than it should be, or a deny guard is missing. Grant only the actions and resources the job needs, and keep explicit Deny guards (such as a VPC endpoint condition) in place.',
       highlight: [resource],
       fixTarget: lastIam?.matched?.objectId ?? resource,
+      fixHint: `Narrow the Allow that grants ${p.action} (${lastIam?.iam?.decisive ? 'the decisive statement is highlighted in the trace' : 'see the trace'}) to the actions and resources the job needs, or restore the Deny guard that should block this caller.`,
+      fixFocus: { tab: 'permissions', label: board.iam?.keys[lastIam?.matched?.objectId ?? ''] ? 'Key policy' : 'Permission policies' },
       trace: t,
     });
   }
@@ -66,7 +68,7 @@ export const iamAccess: EventHandler = (board, ev) => {
           : 'Implicit deny: nothing granted this exact action on this exact resource. Check the action name, the resource ARN, any condition, and (for KMS) the key policy.'
         : 'Fix the network path first: permissions only matter once the request arrives.',
       highlight: [principal, resource].filter((x) => board.components[x]),
-      fixTarget,
+      ...fixFields(fixFromHop(board, bad)),
       trace: t,
     });
   }

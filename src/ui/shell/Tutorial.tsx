@@ -22,12 +22,12 @@ const STEPS: Step[] = [
   },
   {
     title: 'Trace a request',
-    body: 'Press Trace in the top bar and send a request through your design. You will see every hop and the rule that allowed or blocked it.',
+    body: 'Press Trace in the top bar (the route icon) and send a request through your design. You will see every hop and the rule that allowed or blocked it.',
     done: (s) => !!s.activeTrace,
   },
   {
     title: 'Run the simulation',
-    body: "Press Run simulation at the bottom. The events test each requirement against your design and explain what failed and why. Add CloudFront and Route 53 to finish the brief.",
+    body: "Press Run simulation at the bottom. The events test each requirement against your design; a failure says how to fix it, and Fix it opens the exact setting. Still stuck? Press Stuck? for hints. Add CloudFront and Route 53 to finish the brief.",
     done: (s) => !!s.results[s.currentMissionId],
   },
 ];

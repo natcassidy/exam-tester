@@ -42,7 +42,7 @@ export const streamIngest: EventHandler = (board, ev) => {
   const directHose = componentsOfType(board, 'firehose').find((f) => !f.config.sourceId);
   const mbps = (p.eventsPerSec * p.avgKb) / 1000;
   const need = requiredShards(p.eventsPerSec, p.avgKb);
-  const fail = (summary: string, lesson: string, id?: string) => result(ev, { status: 'fail', summary, lesson, highlight: id ? [id] : [], fixTarget: id });
+  const fail = (summary: string, lesson: string, id?: string) => result(ev, { status: 'fail', summary, lesson, highlight: id ? [id] : [], fixTarget: id, fixHint: lesson });
   const pass = (summary: string, lesson: string) => result(ev, { status: 'pass', summary, lesson, highlight: [] });
 
   if (!stream && !queue && !directHose) return fail('Nothing receives the events.', 'Pick an ingestion service: Kinesis Data Streams, Firehose or SQS.');
@@ -80,7 +80,7 @@ export const streamIngest: EventHandler = (board, ev) => {
       { label: 'Enhanced fan-out', value: efo.length ? `${efo.map((l) => l.name).join(', ')}: each gets its own 2 MB/s per shard, pushed (~70 ms).` : 'none' },
     ];
     if (demand > readCap)
-      return result(ev, { status: 'fail', summary: `The consumers fall behind: shared readers need ${demand.toFixed(1)} MB/s but ${shards} shards give ${readCap} MB/s in total. Lag grows until records expire.`, detail: { lines }, lesson: 'Every shared consumer (Firehose included) splits the 2 MB/s per shard read limit. Add shards or give consumers enhanced fan-out.', highlight: [stream.id], fixTarget: stream.id });
+      return result(ev, { status: 'fail', summary: `The consumers fall behind: shared readers need ${demand.toFixed(1)} MB/s but ${shards} shards give ${readCap} MB/s in total. Lag grows until records expire.`, detail: { lines }, lesson: 'Every shared consumer (Firehose included) splits the 2 MB/s per shard read limit. Add shards or give consumers enhanced fan-out.', highlight: [stream.id], fixTarget: stream.id, fixHint: `Open ${stream.name} and raise "Shards" to at least ${Math.ceil(demand / 2)}, or turn on "Enhanced fan-out consumer" on the consumer functions so each gets its own 2 MB/s per shard.`, fixFocus: { tab: 'config', label: 'Shards' } });
     return result(ev, { status: 'pass', summary: `${lambdas.length} consumers each read every event in real time (${demand.toFixed(1)} of ${readCap} MB/s shared read capacity used${efo.length ? `, plus ${efo.length} enhanced fan-out` : ''}).`, detail: { lines }, lesson: 'Kinesis Data Streams: many consumers, each with its own position in the stream.', highlight: [] });
   }
 

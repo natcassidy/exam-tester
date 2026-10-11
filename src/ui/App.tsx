@@ -21,6 +21,7 @@ import { ExamMode } from './mastery/ExamMode';
 import { Tutorial } from './shell/Tutorial';
 import { usePrefersReducedMotion } from './shell/useMedia';
 import { TracePanel } from './trace/TracePanel';
+import { ReferenceModal } from './assist/ReferenceModal';
 
 function RightPanel() {
   const selection = useGame((s) => s.selection);
@@ -39,6 +40,23 @@ export function App() {
   const setPlacing = useGame((s) => s.setPlacing);
   const isMobile = useIsMobile();
   const [briefOpen, setBriefOpen] = useState(false);
+  const [paletteCollapsed, setPaletteCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem('br.paletteCollapsed') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const togglePalette = () => {
+    setPaletteCollapsed((v) => {
+      try {
+        localStorage.setItem('br.paletteCollapsed', v ? '0' : '1');
+      } catch {
+        /* private mode: remembered for this session only */
+      }
+      return !v;
+    });
+  };
   const [dragType, setDragType] = useState<ServiceType | null>(null);
   const mission = useGame((s) => s.mission());
   const mode = modeOf(mission);
@@ -53,6 +71,24 @@ export function App() {
     useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 6 } }),
     useSensor(KeyboardSensor),
   );
+
+  // Undo / redo, unless the player is typing in a field (where the browser's own undo applies).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k !== 'z' && k !== 'y') return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.closest('input, textarea, select, [contenteditable="true"], .cm-editor') || t.isContentEditable)) return;
+      const s = useGame.getState();
+      if (s.examOpen || s.dailyOpen || s.questionsOpen || s.defend) return;
+      e.preventDefault();
+      if (k === 'y' || e.shiftKey) s.redo();
+      else s.undo();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -93,10 +129,10 @@ export function App() {
             <DiffMain key={mission.id} isMobile={isMobile} />
           </div>
         ) : (
-        <div className="main">
+        <div className={`main ${paletteCollapsed ? 'palette-collapsed' : ''}`}>
           {!isMobile && (
             <aside className="col left">
-              <Palette />
+              <Palette collapsed={paletteCollapsed} onToggle={togglePalette} />
             </aside>
           )}
           <main className="col center">
@@ -138,6 +174,7 @@ export function App() {
       <LogsModal />
       <DiagnoseModal />
       <FieldManual />
+      <ReferenceModal />
       {mode === 'build' && <Tutorial />}
       <Toasts />
     </DndContext>

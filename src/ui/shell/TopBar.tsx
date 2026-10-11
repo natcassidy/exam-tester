@@ -1,8 +1,9 @@
-import { Fragment, useRef, useState } from 'react';
+import { Fragment, useState } from 'react';
 import { ALL_MISSIONS } from '../../content/missions';
 import { streak } from '../../engine/mastery/daily';
 import { dailyComplete, localDay, Mode, modeOf, useGame } from '../../store/game';
 import { Settings } from './Settings';
+import { Icon } from './Icon';
 
 const MODES: { id: Mode; label: string; short: string }[] = [
   { id: 'build', label: 'Build', short: 'Build' },
@@ -29,10 +30,6 @@ export function TopBar() {
   const missions = ALL_MISSIONS.filter((m) => modeOf(m) === mode);
   const openManual = useGame((s) => s.openManual);
   const openTrace = useGame((s) => s.openTrace);
-  const exportProgress = useGame((s) => s.exportProgress);
-  const importProgress = useGame((s) => s.importProgress);
-  const toast = useGame((s) => s.toast);
-  const fileRef = useRef<HTMLInputElement>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const openDaily = useGame((s) => s.openDaily);
   const openMap = useGame((s) => s.openMap);
@@ -40,23 +37,6 @@ export function TopBar() {
   const examRunning = useGame((s) => !!s.currentExam());
   const todayDone = useGame((s) => dailyComplete(s.daily[localDay()]));
   const days = useGame((s) => streak(Object.keys(s.daily).filter((d) => dailyComplete(s.daily[d])), localDay()));
-
-  const doExport = () => {
-    try {
-      const blob = new Blob([exportProgress()], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `blast-radius-progress-${new Date().toISOString().slice(0, 10)}.json`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-      toast('Progress exported.', 'success');
-    } catch (e) {
-      toast(`Export failed: ${(e as Error).message}`, 'error');
-    }
-  };
 
   return (
     <header className="topbar">
@@ -89,20 +69,21 @@ export function TopBar() {
       </nav>
       <div className="top-actions">
         <button className={`btn ${todayDone ? '' : 'accent'}`} onClick={() => openDaily(true)} aria-label={days > 0 ? `Today's session, ${days}-day streak` : "Today's session"} title={todayDone ? `Today's session is done. Streak: ${days} day(s)` : "Today's 10-minute session"}>
-          ◷ <span className="label">Today</span>
+          <Icon name="clock" /> <span className="label">Today</span>
           {days > 0 && <span className="streak" aria-hidden>{days}</span>}
         </button>
         <button className="btn" onClick={() => openMap('index')} aria-label="Concept map" title="Concept map: mastery per exam domain and task">
-          ◈ <span className="label">Map</span>
+          <Icon name="map" /> <span className="label">Map</span>
         </button>
         <button className="btn" onClick={() => openExam(true)} aria-label={examRunning ? 'Practice exam (in progress)' : 'Practice exam'} title={examRunning ? 'Practice exam in progress' : 'Practice exam: 65 questions, 130 minutes'}>
-          ✎ <span className="label">Exam</span>
+          <Icon name="pencil" /> <span className="label">Exam</span>
           {examRunning && <span className="streak" aria-hidden>…</span>}
         </button>
+        <span className="top-sep" aria-hidden />
         {mode !== 'diff' && (
           <>
             <button className="btn" onClick={() => openTrace(true)} title="Run an ad-hoc packet trace or simulate an API call" aria-label="Trace">
-              ⟿ <span className="label opt">Trace</span>
+              <Icon name="trace" /> <span className="label opt">Trace</span>
             </button>
             <button
               className="btn"
@@ -112,33 +93,16 @@ export function TopBar() {
               }}
               title="Roles, users, KMS keys and SCPs" aria-label="IAM"
             >
-              ⚿ <span className="label opt">IAM</span>
+              <Icon name="key" /> <span className="label opt">IAM</span>
             </button>
           </>
         )}
-        <button className="btn" onClick={() => openManual('index')} title="Field Manual" aria-label="Field Manual">
-          ☰ <span className="label opt">Field Manual</span>
+        <button className="btn" onClick={() => openManual('index')} title="Field Manual: every concept, explained" aria-label="Field Manual">
+          <Icon name="book" /> <span className="label opt">Manual</span>
         </button>
-        <button className="btn ghost" onClick={doExport} title="Export progress to a JSON file" aria-label="Export">
-          ⇩ <span className="label opt">Export</span>
+        <button className="btn ghost" onClick={() => setSettingsOpen(true)} title="Settings, keyboard shortcuts, and export or import your progress" aria-label="Settings">
+          <Icon name="gear" />
         </button>
-        <button className="btn ghost" onClick={() => fileRef.current?.click()} title="Import progress from a JSON file" aria-label="Import">
-          ⇧ <span className="label opt">Import</span>
-        </button>
-        <button className="btn ghost" onClick={() => setSettingsOpen(true)} title="Settings" aria-label="Settings">
-          ⚙
-        </button>
-        <input
-          ref={fileRef}
-          type="file"
-          accept="application/json,.json"
-          hidden
-          onChange={async (e) => {
-            const f = e.target.files?.[0];
-            e.target.value = '';
-            if (f) importProgress(await f.text());
-          }}
-        />
       </div>
       {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} />}
     </header>

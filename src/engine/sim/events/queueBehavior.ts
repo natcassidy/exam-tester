@@ -28,10 +28,10 @@ export const queueBehavior: EventHandler = (board, ev) => {
   const q = resolveRef(board, p.queue);
   const fn = resolveRef(board, p.consumer);
   if (!q) return result(ev, { status: 'fail', incomplete: true, summary: 'No queue on the board.', lesson: 'Place an SQS queue between the producer and the worker.', highlight: [] });
-  if (!fn) return result(ev, { status: 'fail', summary: `Nothing consumes ${q.name}: no Lambda function has it as an event source.`, lesson: 'Set the queue as the worker function\'s event source.', highlight: [q.id], fixTarget: q.id });
+  if (!fn) return result(ev, { status: 'fail', summary: `Nothing consumes ${q.name}: no Lambda function has it as an event source.`, lesson: 'Set the queue as the worker function\'s event source.', highlight: [q.id], fixTarget: q.id, fixHint: `Place a Lambda function in Regional services and set its "Event source" to ${q.name}.` });
   const qc = q.config as ConfigOf<'sqs'>;
   const fc = fn.config as ConfigOf<'lambda'>;
-  if (fc.eventSourceId !== q.id) return result(ev, { status: 'fail', summary: `${fn.name} consumes a different queue.`, lesson: '', highlight: [fn.id], fixTarget: fn.id });
+  if (fc.eventSourceId !== q.id) return result(ev, { status: 'fail', summary: `${fn.name} consumes a different queue.`, lesson: `Each Lambda event source mapping reads one queue.`, highlight: [fn.id], fixTarget: fn.id, fixHint: `Open ${fn.name} and set its "Event source" to ${q.name}.`, fixFocus: { tab: 'config', label: 'Event source' } });
 
   const lines: { label: string; value: string; status?: 'pass' | 'warn' | 'fail' }[] = [];
   const problems: { text: string; lesson: string; target: string; concept: string }[] = [];
@@ -126,6 +126,7 @@ export const queueBehavior: EventHandler = (board, ev) => {
       manual: [...new Set([...problems.map((x) => x.concept), ...ev.concepts])],
       highlight: [...new Set(problems.map((x) => x.target))],
       fixTarget: problems[0].target,
+      fixHint: problems[0].lesson,
       timeline: { points },
       metrics: { duplicates, maxAgeSec },
     });

@@ -3,12 +3,16 @@ import type { ReactNode } from 'react';
 import type { Board as BoardT, Component, Placement, Region, ServiceType, Subnet, Vpc } from '../../engine/model';
 import { accountOf, subnetsOf, validatePlacement } from '../../engine/board';
 import { subnetPublicStatus } from '../../engine/net/routing';
+import { sgLender } from '../../engine/net/sg';
 import { SERVICES } from '../../content/services';
 import { useGame } from '../../store/game';
 import { Abbr } from '../shell/Abbr';
 import { nodeSubtitle } from './describe';
 import { TraceOverlay } from '../trace/TraceOverlay';
 import { useBoardView } from './context';
+import { useLiveAudit } from './useLiveAudit';
+import { BoardToolbar } from './BoardToolbar';
+import { SecurityOverlay } from './SecurityOverlay';
 
 export function zoneId(z: Placement): string {
   return `${z.kind}:${z.refId}`;
@@ -51,30 +55,59 @@ function Zone({ zone, className, children, label }: { zone: Placement; className
   );
 }
 
+/** The security groups a component wears, flagging ones it borrowed from another component. */
+function SgChips({ board, c }: { board: BoardT; c: Component }) {
+  if (!c.securityGroupIds?.length) return null;
+  return (
+    <span className="sg-chips">
+      {c.securityGroupIds.map((id) => {
+        const sg = board.securityGroups[id];
+        if (!sg) return null;
+        const home = sgLender(board, c, id);
+        return (
+          <span key={id} className={`sg-chip ${home ? 'borrowed' : ''}`} title={home ? `${sg.name} belongs to ${home.name}. Attaching it here lets ${c.name} accept everything ${home.name} accepts.` : `Security group ${sg.name}`}>
+            {home && '⚠ '}
+            {sg.name}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
 function Node({ c, span }: { c: Component; span?: string }) {
   const { board, selection, select, readOnly } = useBoardView();
   const highlight0 = useGame((s) => s.highlight);
   const placing0 = useGame((s) => s.placing);
+  const securityView = useGame((s) => s.securityView);
+  const incident = useGame((s) => !!s.mission().incident);
+  const live = useLiveAudit();
   const highlight = readOnly ? [] : highlight0;
   const placing = readOnly ? null : placing0;
   const selected = selection?.kind === 'component' && selection.id === c.id;
+  const issues = readOnly ? undefined : live?.byComponent[c.id];
+  const bad = highlight.includes(c.id);
   return (
     <button
-      className={`node ${selected ? 'selected' : ''} ${highlight.includes(c.id) ? 'bad' : ''}`}
+      className={`node ${selected ? 'selected' : ''} ${bad ? 'bad' : ''} ${issues && !bad ? 'lint' : ''}`}
       data-node-id={readOnly ? undefined : c.id}
       onClick={(e) => {
         if (placing) return;
         e.stopPropagation();
         select({ kind: 'component', id: c.id });
       }}
-      aria-label={`${SERVICES[c.type].name} ${c.name}`}
+      aria-label={`${SERVICES[c.type].name} ${c.name}${issues ? `. Security issue: ${issues[0].finding.message}` : ''}`}
+      title={issues ? issues.map((i) => `⚠ ${i.rule.title}: ${i.finding.message}`).join('\n') : undefined}
     >
       <Abbr type={c.type} />
       <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         <span className="nm">{c.name}</span>
         <span className="sub">{nodeSubtitle(board, c)}</span>
+        {/* Flag a borrowed group (except in incidents, where spotting it is the job); show every group in the Security view. */}
+        {(securityView || (!incident && !readOnly && c.securityGroupIds?.some((id) => sgLender(board, c, id)))) && <SgChips board={board} c={c} />}
       </span>
       {span && <span className="span-label">{span}</span>}
+      {issues && <span className="lint-badge" aria-hidden>⚠</span>}
     </button>
   );
 }
@@ -266,6 +299,7 @@ export function Board() {
   const edge = board.edge.map((id) => board.components[id]).filter(Boolean);
   return (
     <div className={`board ${placing ? 'placing-mode' : ''} ${readOnly ? 'read-only' : ''}`} onClick={() => !placing && select(null)}>
+      {!readOnly && !placing && <BoardToolbar />}
       {placing && (
         <div className="placing-banner" onClick={(e) => e.stopPropagation()}>
           <span>
@@ -290,6 +324,7 @@ export function Board() {
         <RegionView key={r.id} board={board} region={r} first={i === 0} />
       ))}
       {board.onprem && <OnPremView board={board} />}
+      {!readOnly && <SecurityOverlay />}
       {!readOnly && <TraceOverlay />}
     </div>
   );

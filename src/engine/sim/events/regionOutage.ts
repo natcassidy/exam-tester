@@ -1,6 +1,6 @@
 import { computeRegionOutage, DR_STRATEGY_LABEL, RegionOutageParams } from '../dr';
 import { regionName } from '../../net/geo';
-import { EventHandler, fmtSec, result } from './context';
+import { EventHandler, fixFields, fmtSec, result } from './context';
 
 export const regionOutage: EventHandler = (board, ev) => {
   const p = ev.params as RegionOutageParams;
@@ -16,14 +16,14 @@ export const regionOutage: EventHandler = (board, ev) => {
     detail: {
       lines: [
         strategyLine,
-        ...o.tiers.map((t) => ({ label: t.tier, value: `RTO ${fmtSec(t.rtoSec)} · RPO ${fmtSec(t.rpoSec)} — ${t.explain}`, status: t.rtoSec > p.rtoSec || t.rpoSec > p.rpoSec || t.status === 'fail' ? ('fail' as const) : t.status === 'warn' ? ('warn' as const) : ('pass' as const) })),
+        ...o.tiers.map((t) => ({ label: t.tier, value: `RTO ${fmtSec(t.rtoSec)} · RPO ${fmtSec(t.rpoSec)} — ${t.explain}`, status: t.rtoSec > p.rtoSec || t.rpoSec > p.rpoSec || t.status === 'fail' ? ('fail' as const) : t.status === 'warn' ? ('warn' as const) : ('pass' as const), fix: failing.includes(t) ? t.fix : undefined, about: t.componentId ? [t.componentId] : undefined })),
       ],
     },
     lesson: ok
       ? `RTO = DNS detection + TTL + the slowest of (data recovery, compute start-up). ${DR_STRATEGY_LABEL[o.strategy]} meets these objectives.`
       : (failing[0]?.explain ?? 'Recovery takes too long.'),
     highlight: failing.map((t) => t.componentId).filter((x): x is string => !!x),
-    fixTarget: failing[0]?.componentId,
+    ...(ok ? {} : fixFields(failing[0]?.fix ?? (failing[0]?.componentId ? { target: failing[0].componentId, hint: failing[0].explain } : undefined))),
     trace: o.trace,
     metrics: { rtoSec: o.rtoSec, rpoSec: o.rpoSec },
   });

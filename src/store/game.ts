@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
-import type { Board, EventResult, EventSpec, Flow, Mission, Placement, ServiceType, Trace } from '../engine/model';
+import type { Board, EventResult, EventSpec, FixFocus, FixPointer, Flow, Mission, Placement, ServiceType, Trace } from '../engine/model';
 import type { CallSpec } from '../engine/iam/access';
 import { traceCall } from '../engine/iam/access';
 import { IncidentScore, scoreIncident } from '../engine/incident/score';
@@ -18,7 +18,7 @@ import { CONCEPTS } from '../content/concepts';
 import { QUESTION_BY_ID, QUESTIONS } from '../content/questions';
 import { SURPRISES } from '../content/surprises';
 import { safeStorage } from './storage';
-import { DailyRecord, ExamAttempt, IncidentProgress, migrate, PersistedState, SCHEMA_VERSION, validateImport } from './schema';
+import { AssistRecord, DailyRecord, ExamAttempt, IncidentProgress, migrate, PersistedState, SCHEMA_VERSION, validateImport } from './schema';
 
 /** Wall clock, in one place. */
 export const nowIso = () => new Date().toISOString();
@@ -56,7 +56,24 @@ export interface Toast {
   id: number;
   kind: 'info' | 'error' | 'success';
   text: string;
+  /** One button on the toast, e.g. Undo. */
+  action?: { label: string; run: () => void };
 }
+
+/** "Fix it" from a failed check: what to change on the object it opened. */
+export interface FixNote {
+  missionId: string;
+  /** Name of the check it came from. */
+  source: string;
+  hint: string;
+  target?: string;
+  focus?: FixFocus;
+  /** Bumped on every Fix it, so the console re-points at the control even for the same object. */
+  nonce: number;
+}
+
+const HISTORY_LIMIT = 60;
+const NO_HISTORY = { past: [] as Board[], future: [] as Board[] };
 
 export interface ActiveTrace {
   flow: Flow;
@@ -66,6 +83,10 @@ export interface ActiveTrace {
   call?: CallSpec;
   /** Bumped on each replay so the overlay restarts. */
   nonce: number;
+  /** The board the trace ran on: once the player edits it, the trace is stale. */
+  board: Board;
+  /** Set for traces the player ran (ad-hoc trace or API call), which "Re-run" can repeat on the current board. */
+  replayable?: boolean;
 }
 
 interface UiState {
@@ -97,6 +118,16 @@ interface UiState {
   refactorScores: Record<string, RefactorScore>;
   /** "Practice this": a custom question set for the questions modal. */
   practice: { title: string; questionIds: string[] } | null;
+  // ----- Getting unstuck -----
+  /** Undo/redo stacks per mission (session only). */
+  history: Record<string, { past: Board[]; future: Board[] }>;
+  /** The board each mission's latest results were computed on, to flag stale results. */
+  resultsBoard: Record<string, Board>;
+  fixNote: FixNote | null;
+  /** Reference comparison window: the failing event it was opened from, if any. */
+  referenceOpen: { eventId?: string } | null;
+  /** Board overlay that draws which security group lets which tier in. */
+  securityView: boolean;
 }
 
 interface Actions {
@@ -121,14 +152,15 @@ interface Actions {
   resetBoard: () => void;
   runSim: () => void;
   runTrace: (flow: Flow, label: string) => void;
-  showTrace: (t: Trace, flow: Flow, label: string) => void;
+  /** Show a trace; `board` is the board it was computed on (a simulation run's), defaulting to the current one. */
+  showTrace: (t: Trace, flow: Flow, label: string, opts?: { board?: Board; replayable?: boolean }) => void;
   clearTrace: () => void;
   openSim: (v: boolean) => void;
   openTrace: (v: boolean) => void;
   openManual: (id: string | null) => void;
   openQuestions: (v: boolean) => void;
   answerQuestion: (questionId: string, chosen: string[], correct: boolean) => void;
-  toast: (text: string, kind?: Toast['kind']) => void;
+  toast: (text: string, kind?: Toast['kind'], action?: Toast['action']) => void;
   dismissToast: (id: number) => void;
   exportProgress: () => string;
   importProgress: (json: string) => void;
@@ -151,6 +183,20 @@ interface Actions {
   abandonExam: () => void;
   setTutorial: (step: number, done?: boolean) => void;
   practiceConcept: (conceptId: string) => void;
+  // ----- Getting unstuck -----
+  undo: () => void;
+  redo: () => void;
+  /** Open the object a fix points at, on the right tab and rule, and remember what to change there. */
+  followFix: (fix: FixPointer, source: string) => void;
+  dismissFix: () => void;
+  assist: () => AssistRecord;
+  /** Reveal the next mission hint (charged as an investigation action in incidents). */
+  revealHint: (eventId?: string) => void;
+  openReference: (v: { eventId?: string } | null) => void;
+  setSecurityView: (v: boolean) => void;
+  setLiveChecks: (v: boolean) => void;
+  /** Re-run the active trace on the current board. */
+  rerunTrace: () => void;
 }
 
 export type GameState = PersistedState & UiState & Actions;
@@ -195,6 +241,7 @@ function initialPersisted(): PersistedState {
     defends: {},
     exams: [],
     tutorial: { done: false, step: 0 },
+    assists: {},
   };
 }
 
@@ -213,6 +260,7 @@ function persistedOf(s: PersistedState): PersistedState {
     defends: s.defends,
     exams: s.exams,
     tutorial: s.tutorial,
+    assists: s.assists,
   };
 }
 
@@ -242,6 +290,11 @@ export const useGame = create<GameState>()(
       surprise: {},
       refactorScores: {},
       practice: null,
+      history: {},
+      resultsBoard: {},
+      fixNote: null,
+      referenceOpen: null,
+      securityView: false,
 
       mission: () => MISSION_BY_ID[get().currentMissionId] ?? MISSIONS[0],
       board: () => {
@@ -260,6 +313,8 @@ export const useGame = create<GameState>()(
           placing: null,
           logsOpen: false,
           diagnoseOpen: false,
+          fixNote: null,
+          referenceOpen: null,
           simOpen: !!s.results[id],
           lastByMode: m ? { ...s.lastByMode, [modeOf(m)]: id } : s.lastByMode,
         }));
@@ -315,14 +370,35 @@ export const useGame = create<GameState>()(
 
       apply: (fn, success) => {
         const m = get().mission();
-        const r = fn(get().board());
+        const before = get().board();
+        const r = fn(before);
         if (!r.ok) {
           get().toast(r.error, 'error');
           return false;
         }
-        set((s) => ({ boards: { ...s.boards, [m.id]: r.board } }));
+        set((s) => {
+          const h = s.history[m.id] ?? NO_HISTORY;
+          return { boards: { ...s.boards, [m.id]: r.board }, history: { ...s.history, [m.id]: { past: [...h.past, before].slice(-HISTORY_LIMIT), future: [] } } };
+        });
         if (success) get().toast(success, 'success');
         return true;
+      },
+
+      undo: () => {
+        const m = get().mission();
+        const h = get().history[m.id] ?? NO_HISTORY;
+        if (!h.past.length || m.diff) return;
+        const prev = h.past[h.past.length - 1];
+        const cur = get().board();
+        set((s) => ({ boards: { ...s.boards, [m.id]: prev }, history: { ...s.history, [m.id]: { past: h.past.slice(0, -1), future: [cur, ...h.future] } }, selection: keepSelection(s.selection, prev) }));
+      },
+      redo: () => {
+        const m = get().mission();
+        const h = get().history[m.id] ?? NO_HISTORY;
+        if (!h.future.length || m.diff) return;
+        const next = h.future[0];
+        const cur = get().board();
+        set((s) => ({ boards: { ...s.boards, [m.id]: next }, history: { ...s.history, [m.id]: { past: [...h.past, cur], future: h.future.slice(1) } }, selection: keepSelection(s.selection, next) }));
       },
 
       place: (type, zone) => {
@@ -347,6 +423,7 @@ export const useGame = create<GameState>()(
 
       resetBoard: () => {
         const m = get().mission();
+        const before = get().board();
         set((s) => {
           const boards = { ...s.boards };
           delete boards[m.id];
@@ -358,13 +435,30 @@ export const useGame = create<GameState>()(
           delete reports[m.id];
           const refactorScores = { ...s.refactorScores };
           delete refactorScores[m.id];
-          return { boards, results, incidents, reports, refactorScores, selection: null, activeTrace: null, highlight: [] };
+          const surprise = { ...s.surprise };
+          delete surprise[m.id];
+          // An incident restart also clears actions and the diagnosis, which undo can't bring back.
+          const h = s.history[m.id] ?? NO_HISTORY;
+          const history = { ...s.history, [m.id]: m.incident ? NO_HISTORY : { past: [...h.past, before].slice(-HISTORY_LIMIT), future: [] } };
+          return { boards, results, incidents, reports, refactorScores, surprise, history, selection: null, activeTrace: null, highlight: [], fixNote: null };
         });
-        get().toast(m.incident ? `${m.title}: incident restarted from the alert.` : `${m.title}: board reset.`, 'info');
+        if (m.incident) get().toast(`${m.title}: incident restarted from the alert.`, 'info');
+        else
+          get().toast(`${m.title}: board reset.`, 'info', {
+            label: 'Undo',
+            run: () => {
+              // Only if nothing happened since: the reset must still be the latest change on this mission.
+              const h = get().history[m.id];
+              if (get().currentMissionId === m.id && h?.past[h.past.length - 1] === before && get().board() === startBoardFor(m)) get().undo();
+              else get().toast('The board changed after the reset; use Undo in the toolbar to step back.', 'info');
+            },
+          });
       },
 
       runSim: () => {
         const m = get().mission();
+        // A fix note is about the previous run's failure.
+        set({ fixNote: null });
         if (m.incident) {
           const p = get().incident();
           if (!p.diagnosis) {
@@ -381,6 +475,7 @@ export const useGame = create<GameState>()(
             const best = !prev || report.total > prev.points ? { ...s.best, [m.id]: { stars: report.stars, points: report.total, at: new Date().toISOString() } } : s.best;
             return {
               results: { ...s.results, [m.id]: results },
+              resultsBoard: { ...s.resultsBoard, [m.id]: get().board() },
               reports: { ...s.reports, [m.id]: report },
               incidents: { ...s.incidents, [m.id]: { ...p, verifiedAt: p.verifiedAt ?? new Date().toISOString() } },
               best,
@@ -415,7 +510,7 @@ export const useGame = create<GameState>()(
           set((s) => {
             const prev = s.best[m.id];
             const best = !prev || rs.points > prev.points ? { ...s.best, [m.id]: { stars: rs.stars, points: rs.points, at } } : s.best;
-            return { results: { ...s.results, [m.id]: results }, refactorScores: { ...s.refactorScores, [m.id]: rs }, best, simOpen: true, highlight: results.flatMap((r) => (r.status === 'fail' ? r.highlight : [])) };
+            return { results: { ...s.results, [m.id]: results }, resultsBoard: { ...s.resultsBoard, [m.id]: board }, refactorScores: { ...s.refactorScores, [m.id]: rs }, best, simOpen: true, highlight: results.flatMap((r) => (r.status === 'fail' ? r.highlight : [])) };
           });
           return;
         }
@@ -425,6 +520,7 @@ export const useGame = create<GameState>()(
           const best = !prev || score.points > prev.points ? { ...s.best, [m.id]: { stars: score.stars, points: score.points, at } } : s.best;
           return {
             results: { ...s.results, [m.id]: results },
+            resultsBoard: { ...s.resultsBoard, [m.id]: board },
             best,
             surprise: surprise ? { ...s.surprise, [m.id]: surprise } : s.surprise,
             simOpen: true,
@@ -436,14 +532,21 @@ export const useGame = create<GameState>()(
       runTrace: (flow, label) => {
         get().charge(`trace:${flow.from}>${flow.to}:${flow.protocol}:${flow.port}`, `traced ${label}`);
         const t = traceFlow(get().board(), flow);
-        get().showTrace(t, flow, label);
+        get().showTrace(t, flow, label, { replayable: true });
       },
       runCallTrace: (call, label) => {
         get().charge(`call:${call.principal}>${call.action}>${call.resource}:${call.objectKey ?? ''}`, `simulated ${label}`);
         const trace = traceCall(get().board(), call);
-        set((s) => ({ activeTrace: { trace, flow: { from: call.principal, to: call.resource, protocol: 'tcp', port: 443 }, label, call, nonce: (s.activeTrace?.nonce ?? 0) + 1 }, traceOpen: true }));
+        set((s) => ({ activeTrace: { trace, flow: { from: call.principal, to: call.resource, protocol: 'tcp', port: 443 }, label, call, nonce: (s.activeTrace?.nonce ?? 0) + 1, board: get().board(), replayable: true }, traceOpen: true }));
       },
-      showTrace: (trace, flow, label) => set((s) => ({ activeTrace: { trace, flow, label, nonce: (s.activeTrace?.nonce ?? 0) + 1 }, traceOpen: true })),
+      showTrace: (trace, flow, label, opts) =>
+        set((s) => ({ activeTrace: { trace, flow, label, nonce: (s.activeTrace?.nonce ?? 0) + 1, board: opts?.board ?? get().board(), replayable: opts?.replayable }, traceOpen: true })),
+      rerunTrace: () => {
+        const a = get().activeTrace;
+        if (!a?.replayable) return;
+        if (a.call) return get().runCallTrace(a.call, a.label);
+        get().runTrace(a.flow, a.label);
+      },
       clearTrace: () => set({ activeTrace: null }),
 
       openSim: (simOpen) => set({ simOpen }),
@@ -460,10 +563,10 @@ export const useGame = create<GameState>()(
         }));
       },
 
-      toast: (text, kind = 'info') => {
+      toast: (text, kind = 'info', action) => {
         const id = ++toastSeq;
-        set((s) => ({ toasts: [...s.toasts.slice(-3), { id, kind, text }] }));
-        setTimeout(() => get().dismissToast(id), kind === 'error' ? 7000 : 3500);
+        set((s) => ({ toasts: [...s.toasts.slice(-3), { id, kind, text, action }] }));
+        setTimeout(() => get().dismissToast(id), kind === 'error' || action ? 7000 : 3500);
       },
       dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 
@@ -471,7 +574,7 @@ export const useGame = create<GameState>()(
       importProgress: (json) => {
         try {
           const s = validateImport(JSON.parse(json));
-          set({ ...s, results: {}, reports: {}, refactorScores: {}, surprise: {}, selection: null, activeTrace: null, highlight: [] });
+          set({ ...s, results: {}, reports: {}, refactorScores: {}, surprise: {}, selection: null, activeTrace: null, highlight: [], history: {}, resultsBoard: {}, fixNote: null });
           get().toast('Progress imported.', 'success');
         } catch (e) {
           get().toast(`Import failed: ${(e as Error).message}`, 'error');
@@ -580,6 +683,45 @@ export const useGame = create<GameState>()(
         if (!ids.length) return get().toast('No questions for this concept yet: try a mission that teaches it.', 'info');
         set({ practice: { title: `Practice: ${c?.title ?? conceptId}`, questionIds: ids }, questionsOpen: true, mapOpen: null });
       },
+
+      // ----- Getting unstuck -----
+      followFix: (fix, source) => {
+        const m = get().mission();
+        const nonce = (get().fixNote?.nonce ?? 0) + 1;
+        const target = fix.target ? selectionFor(get().board(), fix.target, fix.ruleRef) : null;
+        if (target) get().select(target, target.kind === 'component' ? (fix.focus?.tab ?? 'config') : undefined);
+        set({ fixNote: { missionId: m.id, source, hint: fix.hint, target: fix.target, focus: fix.focus, nonce }, traceOpen: false });
+      },
+      dismissFix: () => set({ fixNote: null }),
+      assist: () => get().assists[get().mission().id] ?? NO_ASSIST,
+      revealHint: (eventId) => {
+        const m = get().mission();
+        const a = get().assist();
+        const n = a.hints + 1;
+        if (n > (m.hints?.length ?? 0)) return;
+        if (m.incident) get().charge(`hint:${n}`, `read hint ${n}`);
+        const ev = eventId ? m.events.find((e) => e.id === eventId) : undefined;
+        const at = nowIso();
+        set((s) => ({
+          assists: { ...s.assists, [m.id]: { ...a, hints: n } },
+          conceptEvidence: addEvidence(s.conceptEvidence, evidenceFor('assist', `${m.id}/${ev?.id ?? 'hints'}`, ev?.concepts ?? m.concepts, false, at)),
+        }));
+      },
+      openReference: (v) => {
+        const m = get().mission();
+        if (v && !m.incident && !m.diff) {
+          const a = get().assist();
+          const ev = v.eventId ? m.events.find((e) => e.id === v.eventId) : undefined;
+          const at = nowIso();
+          set((s) => ({
+            assists: { ...s.assists, [m.id]: { ...a, referenceAt: a.referenceAt ?? at } },
+            conceptEvidence: addEvidence(s.conceptEvidence, evidenceFor('assist', `${m.id}/${ev?.id ?? 'reference'}`, ev?.concepts ?? m.concepts, false, at, 1)),
+          }));
+        }
+        set({ referenceOpen: v });
+      },
+      setSecurityView: (securityView) => set({ securityView }),
+      setLiveChecks: (v) => set((s) => ({ settings: { ...s.settings, liveChecks: v } })),
     }),
     {
       name: 'blast-radius',
@@ -590,6 +732,26 @@ export const useGame = create<GameState>()(
     },
   ),
 );
+
+const NO_ASSIST: AssistRecord = { hints: 0 };
+
+/** The console selection that opens an object by id (and highlights a rule when given). */
+export function selectionFor(board: Board, id: string, ruleRef?: string): Selection | null {
+  if (board.components[id]) return { kind: 'component', id };
+  if (board.securityGroups[id]) return { kind: 'sg', id, ruleRef };
+  if (board.nacls[id]) return { kind: 'nacl', id, ruleRef };
+  if (board.routeTables[id]) return { kind: 'routeTable', id, ruleRef };
+  if (board.iam?.roles[id]) return { kind: 'role', id };
+  if (board.iam?.keys[id]) return { kind: 'key', id };
+  if (board.regions.some((r) => r.vpcs.some((v) => v.azs.some((a) => a.subnets.some((s) => s.id === id))))) return { kind: 'subnet', id };
+  return null;
+}
+
+/** After undo/redo, drop a selection whose object no longer exists. */
+function keepSelection(sel: Selection | null, board: Board): Selection | null {
+  if (!sel || !('id' in sel)) return sel;
+  return selectionFor(board, sel.id) ? sel : null;
+}
 
 /** Short human name for a selection, used in investigation toasts. */
 export function describeSelection(board: Board, s: Selection): string {

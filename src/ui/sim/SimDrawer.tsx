@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import type { EventResult, EventSpec } from '../../engine/model';
+import type { EventResult, EventSpec, FixPointer } from '../../engine/model';
 import { DOMAIN_LABELS } from '../../engine/model';
 import { scoreResults } from '../../engine/scoring';
 import { manualTitle } from '../../content/manual';
-import { useGame, Selection } from '../../store/game';
+import { useGame } from '../../store/game';
 import { Stars } from '../shell/Abbr';
 import { Timeline } from './Timeline';
 import { resolveEndpoint } from '../../engine/select';
@@ -13,6 +13,9 @@ import type { Mission } from '../../engine/model';
 import type { RefactorScore } from '../../engine/scoring';
 import { DEFENDS } from '../../content/defend';
 import { MISSION_BY_ID } from '../../content/missions';
+import { Icon } from '../shell/Icon';
+import { StuckLadder } from '../assist/StuckLadder';
+import { revealOnBoard } from '../assist/reveal';
 
 const usd = (n: number) => `$${Math.round(n).toLocaleString()}`;
 
@@ -82,15 +85,6 @@ function IncidentReport({ mission, report }: { mission: Mission; report: Inciden
   );
 }
 
-function fixSelection(id: string | undefined, board: ReturnType<ReturnType<typeof useGame.getState>['board']>): Selection | null {
-  if (!id) return null;
-  if (board.components[id]) return { kind: 'component', id };
-  if (board.securityGroups[id]) return { kind: 'sg', id };
-  if (board.nacls[id]) return { kind: 'nacl', id };
-  if (board.routeTables[id]) return { kind: 'routeTable', id };
-  return { kind: 'subnet', id };
-}
-
 function metricChip(r: EventResult): string | null {
   const m = r.metrics;
   if (!m) return null;
@@ -102,10 +96,18 @@ function metricChip(r: EventResult): string | null {
   return null;
 }
 
+const fixOf = (r: EventResult): FixPointer | null => (r.fixHint ? { target: r.fixTarget, hint: r.fixHint, focus: r.fixFocus, ruleRef: r.fixRuleRef } : null);
+
 function ResultCard({ ev, r, missionId, surprise }: { ev: EventSpec; r: EventResult; missionId: string; surprise?: boolean }) {
-  const [open, setOpen] = useState(r.status !== 'pass');
+  const failed = r.status !== 'pass';
+  // Real failures open at full width; "nothing to test yet" and passes stay one line until clicked.
+  const [open, setOpen] = useState(failed && !r.incomplete);
+  // With several failed checks, list them all with their own fixes; one is already covered by "How to fix".
+  const [detail, setDetail] = useState(r.status === 'fail' && (r.detail?.lines.filter((l) => l.status === 'fail' && l.fix).length ?? 0) > 1);
+  const [stuck, setStuck] = useState(false);
   const board = useGame((s) => s.board());
-  const select = useGame((s) => s.select);
+  const runBoard = useGame((s) => s.resultsBoard[missionId]);
+  const followFix = useGame((s) => s.followFix);
   const showTrace = useGame((s) => s.showTrace);
   const openManual = useGame((s) => s.openManual);
   const openTrace = useGame((s) => s.openTrace);
@@ -114,27 +116,87 @@ function ResultCard({ ev, r, missionId, surprise }: { ev: EventSpec; r: EventRes
   // A refactor's prompts are about the new design, so they open once every requirement passes.
   const refactorPending = useGame((s) => !!MISSION_BY_ID[missionId]?.refactor && !s.refactorScores[missionId]?.allPass);
   const canDefend = !!DEFENDS[`${missionId}/${ev.id}`] && !refactorPending;
-  const fix = fixSelection(r.fixTarget, board);
+  const fix = failed ? fixOf(r) : null;
   const chip = metricChip(r);
+  const onBoard = [...r.highlight, ...(r.fixTarget && board.securityGroups[r.fixTarget] ? [r.fixTarget] : [])];
+  if (!open)
+    return (
+      <button id={`result-${ev.id}`} className={`result compact ${r.status}${surprise ? ' surprise' : ''}`} onClick={() => setOpen(true)} aria-expanded={false}>
+        <span className={`tag ${r.status}`}>{r.status.toUpperCase()}</span>
+        <b>{ev.name}</b>
+        {chip && <span className="tag muted mono">{chip}</span>}
+        <span className="hint one-line">{r.summary}</span>
+      </button>
+    );
   return (
-    <article className={`result ${r.status}${surprise ? ' surprise' : ''}`}>
+    <article id={`result-${ev.id}`} className={`result ${r.status}${surprise ? ' surprise' : ''}${failed ? ' wide' : ''}`}>
       <div className="result-head">
         {surprise && <span className="tag accent">SURPRISE</span>}
         <span className={`tag ${r.status}`}>{r.status.toUpperCase()}</span>
         <h4>{ev.name}</h4>
         {chip && <span className="tag muted mono">{chip}</span>}
+        {(!failed || r.incomplete) && (
+          <button className="btn ghost small" onClick={() => setOpen(false)} aria-label="Collapse">
+            ▴
+          </button>
+        )}
       </div>
       <div className="hint">{ev.desc}</div>
       <div className="summary">{r.summary}</div>
+      {fix && (
+        <div className="how-to-fix">
+          <Icon name="target" />
+          <div>
+            <div className="hint">How to fix</div>
+            <div>{fix.hint}</div>
+          </div>
+          <div className="fix-actions">
+            {fix.target && (
+              <button
+                className="btn small primary"
+                onClick={() => {
+                  followFix(fix, ev.name);
+                  revealOnBoard(board, [fix.target!]);
+                }}
+              >
+                Fix it
+              </button>
+            )}
+            {onBoard.length > 0 && (
+              <button className="btn small" onClick={() => revealOnBoard(board, onBoard)}>
+                Show on board
+              </button>
+            )}
+          </div>
+        </div>
+      )}
       {r.timeline && <Timeline series={r.timeline} />}
-      {open && r.detail && (
+      {detail && r.detail && (
         <>
           {r.detail.lines.length > 0 && (
             <div className="detail-lines">
               {r.detail.lines.map((l, i) => (
                 <div key={i}>
                   <span className="k">{l.label}</span>
-                  <span className={l.status ?? ''}>{l.value}</span>
+                  <span className={l.status ?? ''}>
+                    {l.value}
+                    {l.status === 'fail' && l.fix && (
+                      <span className="line-fix">
+                        {l.fix.hint}
+                        {l.fix.target && (
+                          <button
+                            className="btn small"
+                            onClick={() => {
+                              followFix(l.fix!, `${ev.name}: ${l.label}`);
+                              revealOnBoard(board, [l.fix!.target!]);
+                            }}
+                          >
+                            Fix it
+                          </button>
+                        )}
+                      </span>
+                    )}
+                  </span>
                 </div>
               ))}
             </div>
@@ -154,11 +216,16 @@ function ResultCard({ ev, r, missionId, surprise }: { ev: EventSpec; r: EventRes
           )}
         </>
       )}
-      {r.status !== 'pass' && r.lesson && <div className="lesson">{r.lesson}</div>}
+      {failed && r.lesson && (
+        <div className="lesson">
+          {ev.kind === 'audit' && !r.incomplete && <span className="hint">Why it matters · </span>}
+          {r.lesson}
+        </div>
+      )}
       <div className="actions">
-        {r.detail && (
-          <button className="btn small ghost" onClick={() => setOpen(!open)}>
-            {open ? 'Hide detail' : 'Detail'}
+        {r.detail && (r.detail.lines.length > 0 || r.detail.lineItems) && (
+          <button className="btn small ghost" onClick={() => setDetail(!detail)} aria-expanded={detail}>
+            {detail ? 'Hide checks' : r.detail.lines.length > 1 ? `All ${r.detail.lines.length} checks` : 'Detail'}
           </button>
         )}
         {r.trace && (
@@ -167,16 +234,16 @@ function ResultCard({ ev, r, missionId, surprise }: { ev: EventSpec; r: EventRes
             onClick={() => {
               const from = resolveEndpoint(board, ev.params.from) ?? 'internet';
               const to = resolveEndpoint(board, ev.params.to) ?? 'internet';
-              showTrace(r.trace!, { from, to, protocol: 'tcp', port: ev.params.port, clientCity: ev.params.clientCity }, ev.name);
+              showTrace(r.trace!, { from, to, protocol: 'tcp', port: ev.params.port, clientCity: ev.params.clientCity }, ev.name, { board: runBoard });
               openTrace(true);
             }}
           >
-            ⟿ Show trace
+            <Icon name="trace" /> Show trace
           </button>
         )}
-        {r.status !== 'pass' && fix && (
-          <button className="btn small primary" onClick={() => select(fix)}>
-            Fix it
+        {failed && !surprise && (
+          <button className={`btn small ${stuck ? 'on' : ''}`} onClick={() => setStuck(!stuck)} aria-expanded={stuck}>
+            <Icon name="help" /> Stuck?
           </button>
         )}
         {canDefend && r.status === 'pass' && (
@@ -190,8 +257,32 @@ function ResultCard({ ev, r, missionId, surprise }: { ev: EventSpec; r: EventRes
           </button>
         ))}
       </div>
+      {stuck && <StuckLadder eventId={ev.id} />}
     </article>
   );
+}
+
+const ORDER = { fail: 0, warn: 1, pass: 2 } as const;
+
+/** Drawer height the player dragged to, kept per browser. */
+function useDrawerHeight(): [number | null, (h: number) => void] {
+  const [h, setH] = useState<number | null>(() => {
+    try {
+      const v = Number(localStorage.getItem('br.drawerHeight'));
+      return v > 0 ? v : null;
+    } catch {
+      return null;
+    }
+  });
+  const save = (v: number) => {
+    setH(v);
+    try {
+      localStorage.setItem('br.drawerHeight', String(Math.round(v)));
+    } catch {
+      /* private mode: keep it for this session only */
+    }
+  };
+  return [h, save];
 }
 
 export function SimDrawer() {
@@ -205,10 +296,30 @@ export function SimDrawer() {
   const diagnosis = useGame((s) => s.incident().diagnosis);
   const refactor = useGame((s) => s.refactorScores[mission.id]);
   const surprise = useGame((s) => s.surprise[mission.id]);
+  const stale = useGame((s) => !!s.results[mission.id] && s.resultsBoard[mission.id] !== s.board());
+  const [height, setHeight] = useDrawerHeight();
   const score = results && !refactor ? scoreResults(mission.events, results) : null;
   const isIncident = !!mission.incident;
+  const ordered = results
+    ? mission.events
+        .map((ev) => ({ ev, r: results.find((x) => x.eventId === ev.id) }))
+        .filter((x): x is { ev: EventSpec; r: EventResult } => !!x.r)
+        .sort((a, b) => ORDER[a.r.status] - ORDER[b.r.status])
+    : [];
+  const failing = ordered.filter((x) => x.r.status !== 'pass');
+  const startResize = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const move = (m: PointerEvent) => setHeight(Math.min(window.innerHeight * 0.85, Math.max(120, window.innerHeight - m.clientY)));
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
   return (
-    <section className={`drawer ${open ? '' : 'closed'}`} aria-label="Simulation">
+    <section className={`drawer ${open ? '' : 'closed'}`} aria-label="Simulation" style={open && height ? { maxHeight: 'none', height } : undefined}>
+      {open && <div className="drawer-grip" onPointerDown={startResize} role="separator" aria-orientation="horizontal" aria-label="Resize the results panel" title="Drag to resize" />}
       <div className="drawer-head">
         <h3>{isIncident ? 'Verification' : 'Simulation'}</h3>
         {report && (
@@ -234,21 +345,46 @@ export function SimDrawer() {
             </span>
           </span>
         )}
+        {failing.length > 0 && (
+          <span className="failing-chips">
+            <span className="hint">Failing:</span>
+            {failing.map(({ ev, r }) => (
+              <button
+                key={ev.id}
+                className={`tag ${r.status}`}
+                onClick={() => {
+                  setOpen(true);
+                  setTimeout(() => document.getElementById(`result-${ev.id}`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 0);
+                }}
+              >
+                {ev.name}
+              </button>
+            ))}
+          </span>
+        )}
         <span style={{ flex: 1 }} />
         <button className="btn primary" onClick={runSim} title={isIncident && !diagnosis ? 'Diagnose the root cause first' : undefined}>
-          {isIncident ? '✓ Verify fix' : '▶ Run simulation'}
+          {isIncident ? '✓ Verify fix' : <><Icon name="play" /> Run simulation</>}
         </button>
         {results && (
           <button className="btn" onClick={() => openQuestions(true)}>
             Transfer questions
           </button>
         )}
-        <button className="btn ghost small" onClick={() => setOpen(!open)} aria-expanded={open}>
+        <button className="btn ghost small" onClick={() => setOpen(!open)} aria-expanded={open} aria-label={open ? 'Collapse results' : 'Expand results'}>
           {open ? '▾' : '▴'}
         </button>
       </div>
       {open && (
         <div className="drawer-body">
+          {stale && (
+            <div className="stale-banner">
+              <span>The board has changed since this run, so these results may be out of date.</span>
+              <button className="btn small primary" onClick={runSim}>
+                {isIncident ? 'Verify again' : 'Run again'}
+              </button>
+            </div>
+          )}
           {!results && !isIncident && <p className="hint">Run the simulation to throw this mission's events at your design: {mission.events.map((e) => e.name).join(' · ')}.</p>}
           {!results && isIncident && (
             <p className="hint">
@@ -257,14 +393,13 @@ export function SimDrawer() {
           )}
           {report && <IncidentReport mission={mission} report={report} />}
           {refactor && <RefactorReport rs={refactor} />}
-          {results &&
-            mission.events.map((ev) => {
-              const r = results.find((x) => x.eventId === ev.id);
-              return r ? <ResultCard key={ev.id + r.status + r.summary} ev={ev} r={r} missionId={mission.id} /> : null;
-            })}
-          {results && surprise?.result && <ResultCard key={`surprise${surprise.result.status}${surprise.result.summary}`} ev={surprise.event} r={surprise.result} missionId={mission.id} surprise />}
+          {results && surprise?.result && surprise.result.status !== 'pass' && <ResultCard key={`surprise${surprise.result.status}${surprise.result.summary}`} ev={surprise.event} r={surprise.result} missionId={mission.id} surprise />}
+          {ordered.map(({ ev, r }) => (
+            <ResultCard key={ev.id + r.status + r.summary} ev={ev} r={r} missionId={mission.id} />
+          ))}
+          {results && surprise?.result && surprise.result.status === 'pass' && <ResultCard key={`surprise${surprise.result.status}${surprise.result.summary}`} ev={surprise.event} r={surprise.result} missionId={mission.id} surprise />}
           {score && !isIncident && (
-            <div className="result" style={{ borderLeftColor: 'var(--accent)' }}>
+            <div className="result wide" style={{ borderLeftColor: 'var(--accent)' }}>
               <div className="result-head">
                 <h4>Score by domain</h4>
               </div>

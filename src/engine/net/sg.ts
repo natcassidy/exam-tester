@@ -1,4 +1,4 @@
-import type { Board, Protocol, SecurityGroup, SgRule, SgSource } from '../model';
+import type { Board, Component, Protocol, SecurityGroup, SgRule, SgSource } from '../model';
 import { cidrContainsIp, isValidCidr } from './cidr';
 import { PREFIX_LISTS } from './routing';
 
@@ -58,7 +58,35 @@ export function evaluateSgs(
   return { allowed: false };
 }
 
+/** "TCP 443", "TCP 1024-65535" or "all traffic". */
+export function sgPorts(r: SgRule): string {
+  return r.protocol === 'all' ? 'all traffic' : r.fromPort === r.toPort ? `${r.protocol.toUpperCase()} ${r.fromPort}` : `${r.protocol.toUpperCase()} ${r.fromPort}-${r.toPort}`;
+}
+
+/** A rule open to the whole IPv4 internet. */
+export const fromWorld = (r: SgRule): boolean => 'cidr' in r.source && r.source.cidr === '0.0.0.0/0';
+
 export function describeSgRule(board: Board, r: SgRule): string {
-  const ports = r.protocol === 'all' ? 'all traffic' : r.fromPort === r.toPort ? `${r.protocol.toUpperCase()} ${r.fromPort}` : `${r.protocol.toUpperCase()} ${r.fromPort}-${r.toPort}`;
-  return `${ports} ${sourceLabel(board, r.source)}`;
+  return `${sgPorts(r)} ${sourceLabel(board, r.source)}`;
+}
+
+/** Components wearing a security group. */
+export function sgOwners(board: Board, sgId: string): Component[] {
+  return Object.values(board.components).filter((c) => c.securityGroupIds?.includes(sgId));
+}
+
+/**
+ * The components a group belongs to: those wearing it as their first group (the one created with
+ * them). Anyone else wearing it borrowed it. When nobody wears it first, every owner is a home.
+ */
+export function sgHomes(board: Board, sgId: string): Component[] {
+  const all = sgOwners(board, sgId);
+  const first = all.filter((c) => c.securityGroupIds![0] === sgId);
+  return first.length ? first : all;
+}
+
+/** The component `c` borrowed a group from, if it wears another component's group. */
+export function sgLender(board: Board, c: Component, sgId: string): Component | undefined {
+  const homes = sgHomes(board, sgId);
+  return homes.some((h) => h.id === c.id) ? undefined : homes[0];
 }

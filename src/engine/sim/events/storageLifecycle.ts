@@ -91,7 +91,7 @@ export const storageLifecycle: EventHandler = (board, ev) => {
   const cfg = b.config;
   const schedule = [{ afterDays: 0, toClass: cfg.storageClass ?? 'STANDARD' }, ...[...(cfg.lifecycle ?? [])].sort((a, c) => a.afterDays - c.afterDays)];
   const scheduleLine = { label: 'Lifecycle', value: `${schedule.map((t) => `${fmtAge(t.afterDays)}: ${S3_CLASSES[t.toClass].label}`).join(' → ')}${cfg.expireAfterDays != null ? ` → expire at ${fmtAge(cfg.expireAfterDays)}` : ' → kept forever'}` };
-  const fail = (summary: string, lesson: string, extra: { label: string; value: string; status?: 'pass' | 'fail' }[] = [], metrics?: Record<string, number>) => result(ev, { status: 'fail', summary, detail: { lines: [scheduleLine, ...extra] }, lesson, highlight: [b.id], fixTarget: b.id, metrics });
+  const fail = (summary: string, lesson: string, extra: { label: string; value: string; status?: 'pass' | 'fail' }[] = [], metrics?: Record<string, number>) => result(ev, { status: 'fail', summary, detail: { lines: [scheduleLine, ...extra] }, lesson, highlight: [b.id], fixTarget: b.id, fixHint: `Open ${b.name} and adjust its storage class, lifecycle transitions or expiration. ${lesson}`, metrics });
   const pass = (summary: string, lesson: string, extra: { label: string; value: string; status?: 'pass' | 'fail' }[] = [], metrics?: Record<string, number>) => result(ev, { status: 'pass', summary, detail: { lines: [scheduleLine, ...extra] }, lesson, highlight: [], metrics });
 
   if (p.check === 'retrieval') {

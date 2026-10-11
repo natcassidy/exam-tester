@@ -1,6 +1,7 @@
 import { requirementStatus } from '../../engine/sim/runner';
 import { refactorBaselines, useGame } from '../../store/game';
 import { refactorCost } from '../../engine/scoring';
+import { StuckLadder } from '../assist/StuckLadder';
 
 export function Brief() {
   const mission = useGame((s) => s.mission());
@@ -71,6 +72,12 @@ export function Brief() {
           </p>
         </div>
         )}
+        {(!!mission.hints?.length || (!mission.incident && !mission.diff)) && (
+          <div className="section">
+            <h4>Stuck?</h4>
+            <StuckLadder compact />
+          </div>
+        )}
         <div className="section">
           <h4>Exam signal phrases</h4>
           <ul className="hint">
@@ -79,7 +86,7 @@ export function Brief() {
             ))}
           </ul>
         </div>
-        <button className="btn small ghost danger" onClick={() => confirm(mission.incident ? 'Restart this incident? Your board, actions and diagnosis are cleared (your best score is kept).' : "Reset this mission's board?") && resetBoard()}>
+        <button className="btn small ghost danger" onClick={() => (!mission.incident || confirm('Restart this incident? Your board, actions and diagnosis are cleared (your best score is kept).')) && resetBoard()}>
           {mission.incident ? 'Restart incident' : mission.refactor ? 'Restore the production board' : 'Reset board'}
         </button>
       </div>

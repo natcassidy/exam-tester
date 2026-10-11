@@ -3,7 +3,7 @@
 
 import type { ConceptId, EventResult, EventSpec } from '../model';
 
-export type EvidenceKind = 'event' | 'question' | 'incident' | 'diff' | 'defend' | 'exam' | 'daily' | 'surprise';
+export type EvidenceKind = 'event' | 'question' | 'incident' | 'diff' | 'defend' | 'exam' | 'daily' | 'surprise' | 'assist';
 
 export interface Evidence {
   conceptId: ConceptId;
@@ -24,6 +24,8 @@ export const WEIGHTS: Record<EvidenceKind, number> = {
   incident: 1.5,
   diff: 1.5,
   defend: 0.5,
+  /** Asking for a hint: a soft "not yet" for the concepts it covers, so they come back sooner. */
+  assist: 0.5,
 };
 
 export const kindOf = (e: Pick<Evidence, 'source'>): EvidenceKind => e.source.split(':')[0] as EvidenceKind;

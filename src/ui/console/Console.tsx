@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as ops from '../../engine/board';
 import { SERVICES } from '../../content/services';
 import { manualTitle } from '../../content/manual';
@@ -9,6 +9,7 @@ import { ComponentNetworking, NaclEditor, RouteTableEditor, SgEditor, SubnetPane
 import { findSubnet } from '../../engine/net/routing';
 import { iamOf } from '../../engine/iam/access';
 import { ComponentPermissions, hasPermissionsTab, IamOverview, KeyView, RoleView, ScpView } from '../iam/PermissionsPanel';
+import { FixBanner, usePointAt, WhyRed } from './FixGuide';
 
 function NameEditor({ id, name }: { id: string; name: string }) {
   const apply = useGame((s) => s.apply);
@@ -28,7 +29,11 @@ function NameEditor({ id, name }: { id: string; name: string }) {
 }
 
 export function Console() {
+  const root = useRef<HTMLDivElement>(null);
   const sel = useGame((s) => s.selection);
+  const fixNote = useGame((s) => s.fixNote);
+  const selId = sel && 'id' in sel ? sel.id : undefined;
+  const pointAt = fixNote && (!fixNote.target || fixNote.target === selId) ? fixNote.focus?.label : undefined;
   const board = useGame((s) => s.board());
   const tab = useGame((s) => s.consoleTab);
   const setTab = useGame((s) => s.setTab);
@@ -37,6 +42,16 @@ export function Console() {
   const openManual = useGame((s) => s.openManual);
   const active = useGame((s) => s.activeTrace);
   const openTrace = useGame((s) => s.openTrace);
+  const ruleRef = sel && 'ruleRef' in sel ? sel.ruleRef : undefined;
+  usePointAt(root, pointAt, !!ruleRef, [fixNote?.nonce, selId, pointAt, ruleRef]);
+  if (!sel) return null;
+  return (
+    <div ref={root} className="console-root">
+      {body()}
+    </div>
+  );
+
+  function body() {
   if (!sel) return null;
 
   const close = (
@@ -77,6 +92,8 @@ export function Console() {
         </div>
         <div className="panel-body">
           {back}
+          <FixBanner objectId={c.id} />
+          <WhyRed objectId={c.id} />
           {tab === 'config' && <ConfigPanel c={c} />}
           {tab === 'networking' && <ComponentNetworking c={c} />}
           {tab === 'permissions' && hasPermissionsTab(c) && <ComponentPermissions c={c} />}
@@ -135,6 +152,7 @@ export function Console() {
         </div>
         <div className="panel-body">
           {back}
+          {'id' in sel && <FixBanner objectId={sel.id} />}
           {sel.kind === 'iam' && <IamOverview />}
           {sel.kind === 'role' && <RoleView id={sel.id} />}
           {sel.kind === 'key' && <KeyView id={sel.id} />}
@@ -169,6 +187,8 @@ export function Console() {
       </div>
       <div className="panel-body">
         {back}
+        <FixBanner objectId={sel.id} />
+        <WhyRed objectId={sel.id} />
         {sel.kind === 'subnet' && <SubnetPanel subnetId={sel.id} />}
         {sel.kind === 'sg' && <SgEditor sgId={sel.id} ruleRef={sel.ruleRef} />}
         {sel.kind === 'nacl' && <NaclEditor naclId={sel.id} ruleRef={sel.ruleRef} />}
@@ -181,4 +201,5 @@ export function Console() {
       </div>
     </>
   );
+  }
 }

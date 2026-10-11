@@ -1,5 +1,5 @@
 import { computeAzOutage, AzOutageParams } from '../failure';
-import { EventHandler, fmtSec, result } from './context';
+import { EventHandler, fixFields, fmtSec, result } from './context';
 
 export const azOutage: EventHandler = (board, ev) => {
   const p = ev.params as AzOutageParams;
@@ -15,10 +15,10 @@ export const azOutage: EventHandler = (board, ev) => {
   return result(ev, {
     status: ok ? 'pass' : 'fail',
     summary: `${p.az} fails. Measured RTO: ${fmtSec(o.rtoSec)} (requirement ≤ ${fmtSec(p.rtoSec)}) ${rtoOk ? '✓' : '✗'}, RPO: ${fmtSec(o.rpoSec)} (requirement ≤ ${fmtSec(p.rpoSec)}) ${rpoOk ? '✓' : '✗'}.`,
-    detail: { lines: o.tiers.map((t) => ({ label: t.tier, value: `RTO ${fmtSec(t.rtoSec)} · RPO ${fmtSec(t.rpoSec)} — ${t.explain}`, status: t.rtoSec > p.rtoSec || t.rpoSec > p.rpoSec ? 'fail' : t.status === 'warn' ? 'warn' : 'pass' })) },
+    detail: { lines: o.tiers.map((t) => ({ label: t.tier, value: `RTO ${fmtSec(t.rtoSec)} · RPO ${fmtSec(t.rpoSec)} — ${t.explain}`, status: t.rtoSec > p.rtoSec || t.rpoSec > p.rpoSec ? 'fail' : t.status === 'warn' ? 'warn' : 'pass', fix: t.rtoSec > p.rtoSec || t.rpoSec > p.rpoSec ? t.fix : undefined, about: t.componentId ? [t.componentId] : undefined })) },
     lesson: ok ? 'Every tier survives losing an AZ inside the recovery objectives.' : (failing[0] ?? worst).explain,
     highlight: failing.map((t) => t.componentId).filter((x): x is string => !!x),
-    fixTarget: (failing[0] ?? worst)?.componentId,
+    ...(ok ? {} : fixFields((failing[0] ?? worst)?.fix ?? ((failing[0] ?? worst)?.componentId ? { target: (failing[0] ?? worst)!.componentId!, hint: (failing[0] ?? worst)!.explain } : undefined))),
     metrics: { rtoSec: o.rtoSec, rpoSec: o.rpoSec },
   });
 };

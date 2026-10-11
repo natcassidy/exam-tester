@@ -1,7 +1,9 @@
 import type { ComponentId, Trace } from '../../model';
+import { findSubnet } from '../../net/routing';
 import { traceFlow, failingHop } from '../../net/trace';
 import { resolveEndpoint } from '../../select';
-import { EventHandler, result } from './context';
+import { fixFromHop } from '../../net/fixHints';
+import { EventHandler, fixFields, result } from './context';
 
 export interface ReachabilityParams {
   from: string;
@@ -32,7 +34,6 @@ export const reachability: EventHandler = (board, ev) => {
   }
   const t = traceFlow(board, { from: from!, to: to!, protocol: p.protocol ?? 'tcp', port: p.port, clientCity: p.clientCity });
   const bad = failingHop(t);
-  const fixTarget = bad?.matched?.objectId ?? bad?.at.id;
   const metrics: Record<string, number> = {};
   if (t.latencyMs !== undefined) metrics.latencyMs = t.latencyMs;
 
@@ -46,6 +47,7 @@ export const reachability: EventHandler = (board, ev) => {
       lesson: 'Something that should be private is reachable. Check the subnet (public or private), the public IP / publicly accessible setting, and security group sources.',
       highlight: to && to !== 'internet' ? [to] : [],
       fixTarget: to ?? undefined,
+      fixHint: `Open ${board.components[to!]?.name ?? 'the destination'} and make it private: put it in private subnets, turn off public IPs or "Publicly accessible", and allow traffic only from the security group in front of it.`,
       trace: t,
       metrics,
     });
@@ -58,7 +60,7 @@ export const reachability: EventHandler = (board, ev) => {
       summary: `Dropped${bad ? ` at ${bad.check}${bad.matched ? ` (${bad.matched.ruleRef})` : ''}` : ''}: ${bad?.explain ?? 'no path.'}${where && t.paths!.length > 1 ? ` Failing from: ${where.join(', ')}.` : ''}`,
       lesson: bad?.check === 'nacl-in' || bad?.check === 'nacl-out' ? 'NACLs are stateless and ordered. Return traffic needs ephemeral ports 1024-65535.' : 'Follow the trace: every hop must allow the flow, in both directions.',
       highlight: highlightOf(t),
-      fixTarget,
+      ...fixFields(fixFromHop(board, bad)),
       trace: t,
       metrics,
     });
@@ -71,7 +73,13 @@ export const reachability: EventHandler = (board, ev) => {
         summary: `Delivered, but traffic from ${wrong.map((w) => w.subnetId).join(', ')} leaves via ${wrong[0].via.toUpperCase()} instead of the ${p.expectVia === 'vpce' ? 'gateway endpoint' : p.expectVia.toUpperCase()}.`,
         lesson: 'A gateway endpoint only affects the route tables it is associated with. Every private route table needs the association.',
         highlight: [from!],
-        fixTarget: Object.values(board.components).find((c) => c.type === 'vpce')?.id ?? from!,
+        ...(() => {
+          const vpce = Object.values(board.components).find((c) => c.type === 'vpce');
+          const rts = [...new Set(wrong.map((w) => board.routeTables[findSubnet(board, w.subnetId)?.subnet.routeTableId ?? '']?.name).filter(Boolean))];
+          return vpce
+            ? { fixTarget: vpce.id, fixHint: `Open ${vpce.name} and associate it with ${rts.length ? rts.join(' and ') : 'every private route table'} as well.`, fixFocus: { tab: 'config' as const, label: 'Associated route tables' } }
+            : { fixTarget: from!, fixHint: `Drag a VPC gateway endpoint into the VPC's attachments and associate it with every private route table.` };
+        })(),
         trace: t,
         metrics,
       });
@@ -84,6 +92,7 @@ export const reachability: EventHandler = (board, ev) => {
       lesson: 'Distance is latency. Serve from the edge (CloudFront) so most requests never cross an ocean.',
       highlight: [to!],
       fixTarget: to!,
+      fixHint: 'Put CloudFront in front of this origin (Global edge), so users are served from a nearby edge location.',
       trace: t,
       metrics,
     });

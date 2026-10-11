@@ -1,6 +1,6 @@
 // AZ outage model: per-tier RTO/RPO. The worst tier sets the measured values.
 
-import type { Board, Component, ConfigOf } from '../model';
+import type { Board, Component, ConfigOf, FixPointer } from '../model';
 import { componentsOfType, subnetsOf } from '../board';
 import { INSTANCE_RPS_AT_70 } from '../cost/pricing';
 import { allSubnets, findSubnet, targetId, targetKind } from '../net/routing';
@@ -14,6 +14,8 @@ export interface TierOutcome {
   rpoSec: number;
   status: 'pass' | 'warn' | 'fail' | 'info';
   explain: string;
+  /** For a tier that misses the objectives: what to change. */
+  fix?: FixPointer;
 }
 
 export interface AzOutageParams {
@@ -49,7 +51,7 @@ export function computeAzOutage(board: Board, p: AzOutageParams): AzOutageOutcom
     const alive = subnetsOf(alb).filter((s) => azOf(s) !== p.az);
     const detect = cfg.healthCheck.intervalSec * cfg.healthCheck.unhealthyThreshold;
     if (!alive.length) {
-      tiers.push({ tier: 'Load balancer', componentId: alb.id, rtoSec: Infinity, rpoSec: 0, status: 'fail', explain: `${alb.name} is only enabled in ${p.az}. With that AZ down there is no load balancer node to accept traffic.` });
+      tiers.push({ tier: 'Load balancer', componentId: alb.id, rtoSec: Infinity, rpoSec: 0, status: 'fail', explain: `${alb.name} is only enabled in ${p.az}. With that AZ down there is no load balancer node to accept traffic.`, fix: { target: alb.id, hint: `On ${alb.name}'s Networking tab, enable a public subnet in a second AZ.`, focus: { tab: 'networking', label: 'Enabled subnets' } } });
       continue;
     }
     tiers.push({
@@ -72,6 +74,7 @@ export function computeAzOutage(board: Board, p: AzOutageParams): AzOutageOutcom
         rpoSec: 0,
         status: down ? 'fail' : 'pass',
         explain: down ? `${target.name} is a single instance in ${p.az}. Nothing replaces it automatically.` : `${target.name} is not in ${p.az}.`,
+        fix: down ? { target: target.id, hint: `Replace ${target.name} with an Auto Scaling group whose subnets span at least two AZs, and point ${alb.name} at it.` } : undefined,
       });
     }
   }
@@ -96,9 +99,10 @@ export function computeAzOutage(board: Board, p: AzOutageParams): AzOutageOutcom
         rpoSec: 300,
         status: 'fail',
         explain: `Single-AZ: the only copy of ${db.name} is in the failed AZ. Recovery is a point-in-time restore to a new instance (~${mins} min for ${cfg.allocatedStorageGb} GB). Transaction logs ship to S3 every 5 minutes, so up to 5 minutes of writes are lost.${cfg.readReplicas ? ' A read replica could be promoted manually, but replication is asynchronous and promotion is not automatic.' : ''}`,
+        fix: { target: db.id, hint: `Open ${db.name} and turn on "Multi-AZ deployment" for a synchronous standby with automatic failover.`, focus: { tab: 'config', label: 'Multi-AZ deployment' } },
       });
     } else {
-      tiers.push({ tier: 'Database', componentId: db.id, rtoSec: Infinity, rpoSec: Infinity, status: 'fail', explain: `Single-AZ with backup retention 0: there are no automated backups. Total data loss.` });
+      tiers.push({ tier: 'Database', componentId: db.id, rtoSec: Infinity, rpoSec: Infinity, status: 'fail', explain: `Single-AZ with backup retention 0: there are no automated backups. Total data loss.`, fix: { target: db.id, hint: `Open ${db.name}, turn on "Multi-AZ deployment" and set "Backup retention" above 0 days.`, focus: { tab: 'config', label: 'Multi-AZ deployment' } } });
     }
   }
 
@@ -111,7 +115,7 @@ export function computeAzOutage(board: Board, p: AzOutageParams): AzOutageOutcom
     if (db.config.readers > 0)
       tiers.push({ tier: 'Database', componentId: db.id, rtoSec: 30, rpoSec: 0, status: 'pass', explain: `Aurora promotes a reader in another AZ to writer, typically in about 30 seconds. RPO is 0: the cluster volume keeps six copies across three AZs.` });
     else
-      tiers.push({ tier: 'Database', componentId: db.id, rtoSec: 600, rpoSec: 0, status: 'warn', explain: `No Aurora Replica to promote, so Aurora creates a new writer instance in another AZ (up to ~10 minutes). No data is lost: storage is replicated six ways across three AZs.` });
+      tiers.push({ tier: 'Database', componentId: db.id, rtoSec: 600, rpoSec: 0, status: 'warn', explain: `No Aurora Replica to promote, so Aurora creates a new writer instance in another AZ (up to ~10 minutes). No data is lost: storage is replicated six ways across three AZs.`, fix: { target: db.id, hint: `Open ${db.name} and add at least one "Aurora Replicas" so a reader can be promoted in about 30 seconds.`, focus: { tab: 'config', label: 'Aurora Replicas' } } });
   }
 
   // NAT dependency.
@@ -130,6 +134,11 @@ export function computeAzOutage(board: Board, p: AzOutageParams): AzOutageOutcom
       rpoSec: 0,
       status: p.requireOutbound ? 'fail' : 'warn',
       explain: `${stranded.map((s) => s.name).join(', ')} still route 0.0.0.0/0 to ${deadNats[0].name} in the failed AZ. NAT gateways are AZ-scoped, so those instances lose outbound internet access until someone edits the route table. Use one NAT gateway per AZ.`,
+      fix: {
+        target: stranded[0].routeTableId,
+        hint: `Drag a NAT gateway into the public subnet of ${stranded[0].azId} (if there isn't one), then change ${board.routeTables[stranded[0].routeTableId]?.name ?? 'its route table'}'s 0.0.0.0/0 route to point at that NAT gateway.`,
+        ruleRef: 'route 0.0.0.0/0',
+      },
     });
   } else if (componentsOfType(board, 'nat').length) {
     tiers.push({ tier: 'Outbound (NAT)', rtoSec: 0, rpoSec: 0, status: 'pass', explain: 'Every surviving private subnet routes through a NAT gateway in its own AZ.' });
@@ -154,7 +163,7 @@ function asgTier(board: Board, asg: Component, p: AzOutageParams, detectSec: num
   const perInstance = INSTANCE_RPS_AT_70[cfg.instanceType] / 0.7;
   const needed = Math.ceil(p.loadRps / (perInstance * UTIL_LIMIT));
   if (!aliveSubnets.length) {
-    return { tier: 'Compute', componentId: asg.id, rtoSec: Infinity, rpoSec: 0, status: 'fail', explain: `${asg.name} only has subnets in ${p.az}. It cannot launch replacements anywhere else, so the app is down until the AZ recovers.` };
+    return { tier: 'Compute', componentId: asg.id, rtoSec: Infinity, rpoSec: 0, status: 'fail', explain: `${asg.name} only has subnets in ${p.az}. It cannot launch replacements anywhere else, so the app is down until the AZ recovers.`, fix: { target: asg.id, hint: `On ${asg.name}'s Networking tab, tick the private app subnet in a second AZ.`, focus: { tab: 'networking', label: 'Subnets' } } };
   }
   if (surviving >= needed) {
     return {
@@ -167,7 +176,7 @@ function asgTier(board: Board, asg: Component, p: AzOutageParams, detectSec: num
     };
   }
   if (cfg.max < needed) {
-    return { tier: 'Compute', componentId: asg.id, rtoSec: Infinity, rpoSec: 0, status: 'fail', explain: `${needed} instances are needed for ${p.loadRps} rps, but max capacity is ${cfg.max}. The app stays overloaded.` };
+    return { tier: 'Compute', componentId: asg.id, rtoSec: Infinity, rpoSec: 0, status: 'fail', explain: `${needed} instances are needed for ${p.loadRps} rps, but max capacity is ${cfg.max}. The app stays overloaded.`, fix: { target: asg.id, hint: `Open ${asg.name} and raise "Maximum" to at least ${needed}.`, focus: { tab: 'config', label: 'Maximum' } } };
   }
   const detect = cfg.healthCheckType === 'ELB' ? detectSec : EC2_STATUS_DETECT_SEC;
   const rto = detect + LAUNCH_SEC + readyDelayMin(cfg) * 60 - 60;
@@ -178,5 +187,6 @@ function asgTier(board: Board, asg: Component, p: AzOutageParams, detectSec: num
     rpoSec: 0,
     status: 'warn',
     explain: `Only ${surviving} instance(s) survive but ${needed} are needed for ${p.loadRps} rps, so the app is overloaded until replacements are in service: ${detect}s detection + ${LAUNCH_SEC}s launch + ${cfg.warmupSec}s warmup = ${rto}s. A design sized at exactly 100% across two AZs fails during an outage. Over-provision so one AZ can carry the load (static stability).`,
+    fix: { target: asg.id, hint: `Open ${asg.name} and raise "Minimum" and "Desired" so that one AZ alone has at least ${needed} instances (about ${needed * 2} in total across two AZs).`, focus: { tab: 'config', label: 'Desired' } },
   };
 }
