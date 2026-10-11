@@ -16,6 +16,13 @@ describe('progress files', () => {
     expect(s.diffAnswers).toEqual({});
     expect(migrate(s, SCHEMA_VERSION)).toEqual(s);
   });
+  it('migrates v3 → v4: hint records start empty and nothing else changes', () => {
+    const v3 = { schemaVersion: 3, currentMissionId: 'ledgerly', boards: {}, best: {}, questionHistory: [], conceptEvidence: [], settings: { reducedMotion: false }, incidents: {}, diffAnswers: {}, daily: {}, defends: {}, exams: [], tutorial: { done: true, step: 0 } };
+    const s = validateImport({ app: 'blast-radius', state: v3 });
+    expect(s.assists).toEqual({});
+    expect(s.tutorial).toEqual({ done: true, step: 0 });
+    expect(validateImport({ app: 'blast-radius', state: { ...v3, schemaVersion: 4, assists: { ledgerly: { hints: 2 } } } }).assists.ledgerly.hints).toBe(2);
+  });
   it('migrates a Stage 1 (v1) save without losing boards or scores', () => {
     const v1 = { schemaVersion: 1, currentMissionId: 'dropshop', boards: { dropshop: { marker: true } }, best: { dropshop: { stars: 2, points: 70, at: 'x' } }, questionHistory: [{ questionId: 'q1', chosen: ['a'], correct: true, at: 'x' }], conceptEvidence: [], settings: { reducedMotion: true } };
     const s = validateImport({ app: 'blast-radius', state: v1 });
@@ -57,7 +64,7 @@ describe('Stage 4 saves (schema v3)', () => {
 
   it('migrates v2 → v3, backfilling evidence from answers the save already holds', () => {
     const s = validateImport(JSON.parse(JSON.stringify({ app: 'blast-radius', state: v2 })));
-    expect(s.schemaVersion).toBe(3);
+    expect(s.schemaVersion).toBe(SCHEMA_VERSION);
     expect(s.daily).toEqual({});
     expect(s.defends).toEqual({});
     expect(s.exams).toEqual([]);

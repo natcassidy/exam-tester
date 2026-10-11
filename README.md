@@ -10,8 +10,13 @@ The full spec is in [docs/BLAST_RADIUS_SPEC.md](docs/BLAST_RADIUS_SPEC.md). **Al
 npm install
 npm run dev      # local dev server
 npm test         # engine + mission validation tests (Vitest)
+npm run e2e      # browser tests of the getting-unstuck flows (Playwright, Chromium)
 npm run build    # one self-contained dist/index.html that plays from file://
 ```
+
+## Getting unstuck
+
+Every failed check says what is wrong on *your* board, what it should be, and how to fix it. **Fix it** opens the exact object, on the right tab, and highlights the field or rule to change; a pinned banner keeps the instruction in view. Failures sort first in the results drawer and stale results are flagged after an edit. When that isn't enough, **Stuck?** reveals the mission's hints one at a time and then a plain-language comparison with the reference design (hints cost an investigation action in incidents, and every assist counts as a "not yet" for its concepts in spaced repetition). The board toolbar has undo/redo (Ctrl/⌘+Z), an undoable reset, live security checks, and a **Security view** that draws which security group lets which tier in and marks borrowed groups.
 
 No backend and no network calls at runtime. Progress lives in IndexedDB (falling back to localStorage) and can be exported/imported as JSON from the top bar.
 
@@ -22,6 +27,8 @@ No backend and no network calls at runtime. Progress lives in IndexedDB (falling
 - `src/content/` — data: build missions, incidents, Spot the Difference rounds, refactor missions, questions, concepts and exam task statements, surprise events, Defend prompts, Field Manual entries (`manual/*.md`).
 - `src/store/` — Zustand store, persistence and schema migrations.
 - `src/ui/` — React UI (board, console, tracer, sim drawer, manual, questions, incident tools, IAM editor, diff view, concept map, daily session, Defend rounds, exam mode, tutorial and settings).
+- `tests/content/fixes.test.ts` — every failure on every mistake, incident and wrong-fix board carries a fix hint, a target that exists and a focus label the console renders.
+- `e2e/unstuck.spec.ts` — replays stuck scenarios in Chromium (the load balancer's security group on the app tier, the hint ladder, undo/redo, the Security view) and counts the clicks to recover.
 - `tests/content/missions.test.ts` — validates every build mission: the reference board scores 3 stars, the empty board fails, and each listed mistake fails exactly the expected events.
 - `tests/content/incidents.test.ts` — each incident's starting board fails with exactly its symptom, the reference fix passes with no collateral, and every listed wrong fix fails or is flagged.
 - `tests/engine/stage3.test.ts` — peering non-transitivity, TGW route tables, on-prem over VPN/DX, overlapping CIDRs, Route 53 policies, and the RTO/RPO/strategy of each DR strategy.

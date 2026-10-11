@@ -16,7 +16,7 @@ export const regionOutage: EventHandler = (board, ev) => {
     detail: {
       lines: [
         strategyLine,
-        ...o.tiers.map((t) => ({ label: t.tier, value: `RTO ${fmtSec(t.rtoSec)} · RPO ${fmtSec(t.rpoSec)} — ${t.explain}`, status: t.rtoSec > p.rtoSec || t.rpoSec > p.rpoSec || t.status === 'fail' ? ('fail' as const) : t.status === 'warn' ? ('warn' as const) : ('pass' as const), fix: failing.includes(t) ? t.fix : undefined })),
+        ...o.tiers.map((t) => ({ label: t.tier, value: `RTO ${fmtSec(t.rtoSec)} · RPO ${fmtSec(t.rpoSec)} — ${t.explain}`, status: t.rtoSec > p.rtoSec || t.rpoSec > p.rpoSec || t.status === 'fail' ? ('fail' as const) : t.status === 'warn' ? ('warn' as const) : ('pass' as const), fix: failing.includes(t) ? t.fix : undefined, about: t.componentId ? [t.componentId] : undefined })),
       ],
     },
     lesson: ok

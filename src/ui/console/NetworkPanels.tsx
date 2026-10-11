@@ -75,7 +75,16 @@ export function SgEditor({ sgId, ruleRef }: { sgId: string; ruleRef?: string }) 
       <h4>
         Security group {sg.name} <span className="mono">({sg.id})</span>
       </h4>
-      <p className="hint">Stateful, allow-only. Attached to: {owners.map((o) => o.name).join(', ') || 'nothing'}.</p>
+      <p className="hint">Stateful and allow-only. Its inbound rules decide what the components wearing it accept.</p>
+      <div className="attached-to">
+        <span className="hint">Worn by</span>
+        {owners.length ? owners.map((o) => <span key={o.id} className="tag muted">{o.name}</span>) : <span className="hint">nothing</span>}
+      </div>
+      {new Set(owners.map((o) => o.type)).size > 1 && (
+        <p className="warn-note">
+          ⚠ {sg.name} is worn by different tiers ({owners.map((o) => o.name).join(', ')}). Each of them accepts everything this group allows{sg.inbound.some((r) => 'cidr' in r.source && r.source.cidr === '0.0.0.0/0') ? ', including traffic from the whole internet' : ''}. To let one tier reach another, add a rule whose <i>source</i> is the other tier's group instead of sharing the group.
+        </p>
+      )}
       <div className="hint" style={{ marginTop: 6 }}>Inbound</div>
       {table('inbound')}
       <div className="hint" style={{ marginTop: 6 }}>Outbound</div>
@@ -119,11 +128,15 @@ export function SgEditor({ sgId, ruleRef }: { sgId: string; ruleRef?: string }) 
         {srcKind === 'cidr' && <input type="text" value={src} onChange={(e) => setSrc(e.target.value)} aria-label="CIDR" />}
         {srcKind === 'sg' && (
           <select value={src} onChange={(e) => setSrc(e.target.value)} aria-label="Security group">
-            {sgs.map((x) => (
-              <option key={x.id} value={x.id}>
-                {x.name}
-              </option>
-            ))}
+            {sgs.map((x) => {
+              const on = Object.values(board.components).filter((c) => c.securityGroupIds?.includes(x.id));
+              return (
+                <option key={x.id} value={x.id}>
+                  {x.name}
+                  {on.length ? ` (on ${on.map((c) => c.name).join(', ')})` : ''}
+                </option>
+              );
+            })}
           </select>
         )}
         {srcKind === 'prefixList' && (
@@ -435,10 +448,18 @@ export function ComponentNetworking({ c }: { c: Component }) {
       {c.securityGroupIds && (
         <div className="section">
           <h4>Security groups attached</h4>
-          {sgs.map((sg) => (
-            <label key={sg.id} className="field">
+          <p className="hint">
+            The groups {c.name} wears: their inbound rules decide what reaches it. To let another tier in, don't attach that tier's group here; add a rule to {c.name}'s own group with the other group as the <i>source</i>.
+          </p>
+          {sgs.map((sg) => {
+            const wornBy = Object.values(board.components).filter((o) => o.id !== c.id && o.securityGroupIds?.includes(sg.id));
+            const borrowed = c.securityGroupIds![0] !== sg.id && wornBy.some((o) => o.securityGroupIds![0] === sg.id) && c.securityGroupIds!.includes(sg.id);
+            return (
+            <label key={sg.id} className={`field ${borrowed ? 'borrowed' : ''}`}>
               <span>
                 {sg.name} <span className="hint">{sg.inbound.map((r) => describeSgRule(board, r)).join('; ') || 'no inbound rules'}</span>
+                {wornBy.length > 0 && <span className="hint"> · also on {wornBy.map((o) => o.name).join(', ')}</span>}
+                {borrowed && <div className="warn-note">⚠ This is {wornBy.find((o) => o.securityGroupIds![0] === sg.id)!.name}'s group. Wearing it, {c.name} accepts everything {wornBy.find((o) => o.securityGroupIds![0] === sg.id)!.name} accepts.</div>}
               </span>
               <input
                 type="checkbox"
@@ -446,7 +467,8 @@ export function ComponentNetworking({ c }: { c: Component }) {
                 onChange={(e) => apply((b) => ops.attachSecurityGroups(b, c.id, e.target.checked ? [...c.securityGroupIds!, sg.id] : c.securityGroupIds!.filter((x) => x !== sg.id)))}
               />
             </label>
-          ))}
+            );
+          })}
           <button
             className="btn small"
             style={{ marginTop: 6 }}

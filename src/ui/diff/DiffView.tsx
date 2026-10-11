@@ -24,7 +24,7 @@ function srcLabel(b: BoardT, s: SgSource): string {
 const sgRule = (b: BoardT, r: SgRule) => `${r.protocol} ${r.fromPort === r.toPort ? r.fromPort : `${r.fromPort}-${r.toPort}`} ${srcLabel(b, r.source)}`;
 
 /** Readable settings of one object, as label/value rows, so the two boards can be compared line by line. */
-function describeObject(b: BoardT, sel: Selection): [string, string][] {
+export function describeObject(b: BoardT, sel: Selection): [string, string][] {
   const rows: [string, string][] = [];
   if (sel.kind === 'component') {
     const c = b.components[sel.id];

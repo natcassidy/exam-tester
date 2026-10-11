@@ -717,7 +717,7 @@ export interface FixPointer {
 }
 
 export interface EventDetail {
-  lines: { label: string; value: string; status?: 'pass' | 'warn' | 'fail'; fix?: FixPointer }[];
+  lines: { label: string; value: string; status?: 'pass' | 'warn' | 'fail'; fix?: FixPointer; /** Components the line is about. */ about?: string[] }[];
   lineItems?: CostLineItem[];
 }
 

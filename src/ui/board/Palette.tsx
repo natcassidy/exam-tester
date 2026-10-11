@@ -3,6 +3,7 @@ import type { ServiceType } from '../../engine/model';
 import { SERVICES } from '../../content/services';
 import { useGame } from '../../store/game';
 import { Abbr } from '../shell/Abbr';
+import { Icon } from '../shell/Icon';
 
 const ALL: ServiceType[] = [
   'cloudfront', 'route53', 'waf', 'apigw', 'lambda', 'sqs', 'dynamodb', 's3', 'kinesis', 'firehose', 'athena', 'backup', 'tgw', 'dms',
@@ -10,7 +11,7 @@ const ALL: ServiceType[] = [
   'cgw', 'vpn', 'dx', 'snow', 'datasync', 'savings',
 ];
 
-function Item({ type }: { type: ServiceType }) {
+function Item({ type, iconOnly = false }: { type: ServiceType; iconOnly?: boolean }) {
   const placing = useGame((s) => s.placing);
   const setPlacing = useGame((s) => s.setPlacing);
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: `pal:${type}`, data: { type } });
@@ -25,12 +26,15 @@ function Item({ type }: { type: ServiceType }) {
       onClick={() => setPlacing(placing === type ? null : type)}
       aria-pressed={placing === type}
       aria-label={`Place ${s.name} (${s.zoneHint}). Drag onto the board, or tap then tap a zone.`}
+      title={iconOnly ? `${s.name} · ${s.zoneHint}` : undefined}
     >
       <Abbr type={type} />
-      <span className="meta">
-        <span>{s.name}</span>
-        <small>{s.zoneHint}</small>
-      </span>
+      {!iconOnly && (
+        <span className="meta">
+          <span>{s.name}</span>
+          <small>{s.zoneHint}</small>
+        </span>
+      )}
     </button>
   );
 }
@@ -39,9 +43,23 @@ export function paletteFor(palette?: ServiceType[]): ServiceType[] {
   return palette ? ALL.filter((t) => palette.includes(t)) : ALL;
 }
 
-export function Palette({ tray = false }: { tray?: boolean }) {
+export function Palette({ tray = false, collapsed = false, onToggle }: { tray?: boolean; collapsed?: boolean; onToggle?: () => void }) {
   const mission = useGame((s) => s.mission());
   const types = paletteFor(mission.palette);
+  const toggle = onToggle && (
+    <button className="btn ghost small palette-toggle" onClick={onToggle} aria-label={collapsed ? 'Expand the services palette' : 'Collapse the services palette'} title={collapsed ? 'Expand' : 'Collapse to icons'}>
+      <Icon name={collapsed ? 'chevronRight' : 'chevronLeft'} />
+    </button>
+  );
+  if (collapsed && !tray)
+    return (
+      <div className="palette collapsed" aria-label="Services">
+        {toggle}
+        {types.map((t) => (
+          <Item key={t} type={t} iconOnly />
+        ))}
+      </div>
+    );
   if (!types.length)
     return tray ? null : (
       <div className="palette" aria-label="Services">
@@ -59,7 +77,9 @@ export function Palette({ tray = false }: { tray?: boolean }) {
     );
   return (
     <div className="palette" aria-label="Services">
-      <h3>Services</h3>
+      <h3>
+        Services {toggle}
+      </h3>
       {types.map((t) => (
         <Item key={t} type={t} />
       ))}

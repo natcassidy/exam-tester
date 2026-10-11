@@ -12,6 +12,7 @@ const KIND_LABEL: Record<string, string> = {
   diff: 'Spot the Difference',
   defend: 'Defend round',
   daily: 'Daily session',
+  assist: 'Asked for help',
 };
 
 /** Human description of where a piece of evidence came from. */
@@ -19,7 +20,7 @@ export function evidenceLabel(e: Evidence): { kind: string; what: string } {
   const k = kindOf(e);
   const id = e.source.slice(k.length + 1);
   const kind = KIND_LABEL[k] ?? k;
-  if (k === 'event' || k === 'surprise' || k === 'defend') {
+  if (k === 'event' || k === 'surprise' || k === 'defend' || k === 'assist') {
     const [mid, eid] = id.split('/');
     const m = MISSION_BY_ID[mid];
     const ev = m?.events.find((x) => x.id === eid);

@@ -5,7 +5,7 @@ import type { DailyPlan } from '../engine/mastery/daily';
 import { QUESTION_BY_ID } from '../content/questions';
 import { MISSION_BY_ID } from '../content/missions';
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export interface BestResult {
   stars: 0 | 1 | 2 | 3;
@@ -22,6 +22,15 @@ export interface QuestionAnswer {
 
 export interface Settings {
   reducedMotion: boolean;
+  /** Run the mission's audit checks as you edit (default on; older saves lack the field). */
+  liveChecks?: boolean;
+}
+
+/** Help the player asked for on a mission: hints revealed and whether they looked at the reference. */
+export interface AssistRecord {
+  hints: number;
+  /** When the player first opened the reference comparison. */
+  referenceAt?: string;
 }
 
 /** Stage 2: where an incident investigation stands. */
@@ -86,6 +95,9 @@ export interface PersistedState {
   defends: Record<string, DefendAnswer>;
   exams: ExamAttempt[];
   tutorial: { done: boolean; step: number };
+  // ----- schema v4 -----
+  /** Hints and reference reveals, per mission. */
+  assists: Record<string, AssistRecord>;
 }
 
 const validTime = (at: unknown): at is string => typeof at === 'string' && !Number.isNaN(Date.parse(at));
@@ -123,6 +135,8 @@ export const MIGRATIONS: Record<number, (s: any) => any> = {
     exams: s.exams ?? [],
     tutorial: s.tutorial ?? { done: Object.keys(s.best ?? {}).length > 0 || Object.keys(s.boards ?? {}).length > 0, step: 0 },
   }),
+  // 3 → 4: the hint ladder records which hints were revealed per mission.
+  3: (s) => ({ ...s, assists: s.assists ?? {} }),
 };
 
 export function migrate(state: any, fromVersion: number): PersistedState {
@@ -139,6 +153,6 @@ export function validateImport(data: unknown): PersistedState {
   if (version > SCHEMA_VERSION) throw new Error(`This file was made by a newer version (schema ${version}).`);
   const s = migrate(d.state, version);
   if (typeof s.boards !== 'object' || typeof s.best !== 'object' || !Array.isArray(s.questionHistory) || typeof s.incidents !== 'object' || typeof s.diffAnswers !== 'object') throw new Error('Progress file is incomplete.');
-  if (!Array.isArray(s.conceptEvidence) || typeof s.daily !== 'object' || typeof s.defends !== 'object' || !Array.isArray(s.exams) || typeof s.tutorial !== 'object') throw new Error('Progress file is incomplete.');
+  if (!Array.isArray(s.conceptEvidence) || typeof s.daily !== 'object' || typeof s.defends !== 'object' || !Array.isArray(s.exams) || typeof s.tutorial !== 'object' || typeof s.assists !== 'object') throw new Error('Progress file is incomplete.');
   return s;
 }
