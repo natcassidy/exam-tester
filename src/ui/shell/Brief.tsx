@@ -2,6 +2,22 @@ import { requirementStatus } from '../../engine/sim/runner';
 import { refactorBaselines, useGame } from '../../store/game';
 import { refactorCost } from '../../engine/scoring';
 import { StuckLadder } from '../assist/StuckLadder';
+import { hasHardMode } from '../../engine/palette';
+
+/** Easy / hard switch: hard mixes services the design doesn't need into the palette. */
+export function DifficultyToggle() {
+  const difficulty = useGame((s) => s.settings.difficulty ?? 'easy');
+  const setDifficulty = useGame((s) => s.setDifficulty);
+  return (
+    <span className="seg" role="radiogroup" aria-label="Difficulty">
+      {(['easy', 'hard'] as const).map((d) => (
+        <button key={d} role="radio" aria-checked={difficulty === d} className={difficulty === d ? 'on' : ''} onClick={() => setDifficulty(d)}>
+          {d === 'easy' ? 'Easy' : 'Hard'}
+        </button>
+      ))}
+    </span>
+  );
+}
 
 export function Brief() {
   const mission = useGame((s) => s.mission());
@@ -10,6 +26,8 @@ export function Brief() {
   const status = results ? requirementStatus(mission, results) : null;
   const rs = useGame((s) => s.refactorScores[mission.id]);
   const startCost = mission.refactor ? refactorCost(mission, refactorBaselines(mission).start) : 0;
+  const difficulty = useGame((s) => s.settings.difficulty ?? 'easy');
+  const hard = difficulty === 'hard' && hasHardMode(mission);
   return (
     <>
       <div className="panel-head">
@@ -60,6 +78,18 @@ export function Brief() {
             );
           })}
         </div>
+        {hasHardMode(mission) && (
+          <div className="section">
+            <h4 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              Difficulty <DifficultyToggle />
+            </h4>
+            <p className="hint">
+              {hard
+                ? `Hard: the palette mixes in ${mission.distractors!.length} services this design doesn't need, and the exam signal phrases stay hidden until your first run. Picking the right tools is part of the job.`
+                : 'Easy: the palette offers only the services this mission can use. Switch to hard to choose from extra, plausible services too.'}
+            </p>
+          </div>
+        )}
         {!mission.incident && (
         <div className="section">
           <h4>Mission setup</h4>
@@ -80,11 +110,15 @@ export function Brief() {
         )}
         <div className="section">
           <h4>Exam signal phrases</h4>
-          <ul className="hint">
-            {mission.keywords.map((k) => (
-              <li key={k}>{k}</li>
-            ))}
-          </ul>
+          {hard && !results ? (
+            <p className="hint">Hidden in hard mode until your first run: they name the services.</p>
+          ) : (
+            <ul className="hint">
+              {mission.keywords.map((k) => (
+                <li key={k}>{k}</li>
+              ))}
+            </ul>
+          )}
         </div>
         <button className="btn small ghost danger" onClick={() => (!mission.incident || confirm('Restart this incident? Your board, actions and diagnosis are cleared (your best score is kept).')) && resetBoard()}>
           {mission.incident ? 'Restart incident' : mission.refactor ? 'Restore the production board' : 'Reset board'}

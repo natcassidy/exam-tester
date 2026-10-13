@@ -4,12 +4,8 @@ import { SERVICES } from '../../content/services';
 import { useGame } from '../../store/game';
 import { Abbr } from '../shell/Abbr';
 import { Icon } from '../shell/Icon';
+import { hasHardMode, missionPalette } from '../../engine/palette';
 
-const ALL: ServiceType[] = [
-  'cloudfront', 'route53', 'waf', 'apigw', 'lambda', 'sqs', 'dynamodb', 's3', 'kinesis', 'firehose', 'athena', 'backup', 'tgw', 'dms',
-  'alb', 'asg', 'ec2', 'rds', 'aurora', 'nat', 'igw', 'vpce', 'pcx', 'vgw',
-  'cgw', 'vpn', 'dx', 'snow', 'datasync', 'savings',
-];
 
 function Item({ type, iconOnly = false }: { type: ServiceType; iconOnly?: boolean }) {
   const placing = useGame((s) => s.placing);
@@ -39,13 +35,10 @@ function Item({ type, iconOnly = false }: { type: ServiceType; iconOnly?: boolea
   );
 }
 
-export function paletteFor(palette?: ServiceType[]): ServiceType[] {
-  return palette ? ALL.filter((t) => palette.includes(t)) : ALL;
-}
-
 export function Palette({ tray = false, collapsed = false, onToggle }: { tray?: boolean; collapsed?: boolean; onToggle?: () => void }) {
   const mission = useGame((s) => s.mission());
-  const types = paletteFor(mission.palette);
+  const difficulty = useGame((s) => s.settings.difficulty ?? 'easy');
+  const types = missionPalette(mission, difficulty);
   const toggle = onToggle && (
     <button className="btn ghost small palette-toggle" onClick={onToggle} aria-label={collapsed ? 'Expand the services palette' : 'Collapse the services palette'} title={collapsed ? 'Expand' : 'Collapse to icons'}>
       <Icon name={collapsed ? 'chevronRight' : 'chevronLeft'} />
@@ -78,13 +71,14 @@ export function Palette({ tray = false, collapsed = false, onToggle }: { tray?: 
   return (
     <div className="palette" aria-label="Services">
       <h3>
-        Services {toggle}
+        Services {hasHardMode(mission) && <span className={`tag ${difficulty === 'hard' ? 'accent' : 'muted'}`} title={difficulty === 'hard' ? 'Hard mode: some of these services are not needed' : 'Easy mode: only the services this mission can use'}>{difficulty === 'hard' ? 'HARD' : 'EASY'}</span>} {toggle}
       </h3>
       {types.map((t) => (
         <Item key={t} type={t} />
       ))}
       <p className="hint" style={{ marginTop: 8 }}>
         Drag a service onto the board, or click it and then click a zone. Placement only blocks what AWS itself forbids.
+        {difficulty === 'hard' && hasHardMode(mission) && ' Hard mode: not every service here belongs in the design.'}
       </p>
     </div>
   );

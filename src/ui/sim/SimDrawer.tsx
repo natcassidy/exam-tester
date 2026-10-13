@@ -263,6 +263,7 @@ function ResultCard({ ev, r, missionId, surprise }: { ev: EventSpec; r: EventRes
 }
 
 const ORDER = { fail: 0, warn: 1, pass: 2 } as const;
+const isIncidentMission = (m: Mission) => !!m.incident;
 
 /** Drawer height the player dragged to, kept per browser. */
 function useDrawerHeight(): [number | null, (h: number) => void] {
@@ -298,6 +299,9 @@ export function SimDrawer() {
   const surprise = useGame((s) => s.surprise[mission.id]);
   const stale = useGame((s) => !!s.results[mission.id] && s.resultsBoard[mission.id] !== s.board());
   const [height, setHeight] = useDrawerHeight();
+  const openDebrief = useGame((s) => s.openDebrief);
+  const canReview = !!results && !isIncidentMission(mission) && !mission.diff && !!mission.decisions?.length;
+  const solved = !!results?.length && results.every((r) => r.status === 'pass');
   const score = results && !refactor ? scoreResults(mission.events, results) : null;
   const isIncident = !!mission.incident;
   const ordered = results
@@ -366,6 +370,11 @@ export function SimDrawer() {
         <button className="btn primary" onClick={runSim} title={isIncident && !diagnosis ? 'Diagnose the root cause first' : undefined}>
           {isIncident ? '✓ Verify fix' : <><Icon name="play" /> Run simulation</>}
         </button>
+        {canReview && (
+          <button className={`btn ${solved ? 'accent' : ''}`} onClick={() => openDebrief(true)} title={solved ? 'Compare your design with the reference, decision by decision' : 'See the reference solution. Until every check passes, this counts as help and its concepts come back sooner.'}>
+            <Icon name="map" /> {solved ? 'Solution review' : 'See the solution'}
+          </button>
+        )}
         {results && (
           <button className="btn" onClick={() => openQuestions(true)}>
             Transfer questions
@@ -390,6 +399,16 @@ export function SimDrawer() {
             <p className="hint">
               Investigate, name the root cause (Diagnose), fix it with the smallest change, then Verify fix. Verification replays: {mission.events.map((e) => e.name).join(' · ')}.
             </p>
+          )}
+          {canReview && solved && !stale && (
+            <div className="result wide review-cta">
+              <p>
+                <b>Mission complete.</b> See the reference solution next to yours, with the key decisions explained and why each one matters.
+              </p>
+              <button className="btn small primary" onClick={() => openDebrief(true)}>
+                Open the solution review
+              </button>
+            </div>
           )}
           {report && <IncidentReport mission={mission} report={report} />}
           {refactor && <RefactorReport rs={refactor} />}
