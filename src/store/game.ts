@@ -18,7 +18,8 @@ import { CONCEPTS } from '../content/concepts';
 import { QUESTION_BY_ID, QUESTIONS } from '../content/questions';
 import { SURPRISES } from '../content/surprises';
 import { safeStorage } from './storage';
-import { AssistRecord, DailyRecord, ExamAttempt, IncidentProgress, migrate, PersistedState, SCHEMA_VERSION, validateImport } from './schema';
+import type { Difficulty } from '../engine/palette';
+import { AssistRecord, BestResult, DailyRecord, ExamAttempt, IncidentProgress, migrate, PersistedState, SCHEMA_VERSION, validateImport } from './schema';
 
 /** Wall clock, in one place. */
 export const nowIso = () => new Date().toISOString();
@@ -126,6 +127,8 @@ interface UiState {
   fixNote: FixNote | null;
   /** Reference comparison window: the failing event it was opened from, if any. */
   referenceOpen: { eventId?: string } | null;
+  /** End-of-mission solution review: the reference design, its key decisions and how the player's differs. */
+  debriefOpen: boolean;
   /** Board overlay that draws which security group lets which tier in. */
   securityView: boolean;
 }
@@ -195,6 +198,9 @@ interface Actions {
   openReference: (v: { eventId?: string } | null) => void;
   setSecurityView: (v: boolean) => void;
   setLiveChecks: (v: boolean) => void;
+  setDifficulty: (v: Difficulty) => void;
+  /** Open the solution review. Before every check passes it counts as help, like the reference comparison. */
+  openDebrief: (v: boolean) => void;
   /** Re-run the active trace on the current board. */
   rerunTrace: () => void;
 }
@@ -221,6 +227,15 @@ export function modeOf(m: Mission): Mode {
 }
 
 const NO_PROGRESS: IncidentProgress = { actions: [], diagnosis: null };
+
+/** A run's effect on the mission's best result: the best points overall, and the best stars in hard mode. */
+function bestAfter(prev: BestResult | undefined, stars: BestResult['stars'], points: number, at: string, difficulty?: Difficulty): BestResult {
+  const next: BestResult = !prev || points > prev.points ? { stars, points, at } : { ...prev };
+  const hard = difficulty === 'hard' ? stars : 0;
+  const hardStars = Math.max(prev?.hardStars ?? 0, hard) as BestResult['stars'];
+  if (hardStars) next.hardStars = hardStars;
+  return next;
+}
 
 function selectionKey(s: Selection): string {
   return 'id' in s ? `open:${s.kind}:${s.id}` : `open:${s.kind}`;
@@ -294,6 +309,7 @@ export const useGame = create<GameState>()(
       resultsBoard: {},
       fixNote: null,
       referenceOpen: null,
+      debriefOpen: false,
       securityView: false,
 
       mission: () => MISSION_BY_ID[get().currentMissionId] ?? MISSIONS[0],
@@ -315,6 +331,7 @@ export const useGame = create<GameState>()(
           diagnoseOpen: false,
           fixNote: null,
           referenceOpen: null,
+          debriefOpen: false,
           simOpen: !!s.results[id],
           lastByMode: m ? { ...s.lastByMode, [modeOf(m)]: id } : s.lastByMode,
         }));
@@ -509,7 +526,7 @@ export const useGame = create<GameState>()(
           const rs = scoreRefactor(m, results, base.start, base.ref);
           set((s) => {
             const prev = s.best[m.id];
-            const best = !prev || rs.points > prev.points ? { ...s.best, [m.id]: { stars: rs.stars, points: rs.points, at } } : s.best;
+            const best = { ...s.best, [m.id]: bestAfter(prev, rs.stars, rs.points, at, s.settings.difficulty) };
             return { results: { ...s.results, [m.id]: results }, resultsBoard: { ...s.resultsBoard, [m.id]: board }, refactorScores: { ...s.refactorScores, [m.id]: rs }, best, simOpen: true, highlight: results.flatMap((r) => (r.status === 'fail' ? r.highlight : [])) };
           });
           return;
@@ -517,7 +534,7 @@ export const useGame = create<GameState>()(
         const score = scoreResults(m.events, results);
         set((s) => {
           const prev = s.best[m.id];
-          const best = !prev || score.points > prev.points ? { ...s.best, [m.id]: { stars: score.stars, points: score.points, at } } : s.best;
+          const best = { ...s.best, [m.id]: bestAfter(prev, score.stars, score.points, at, s.settings.difficulty) };
           return {
             results: { ...s.results, [m.id]: results },
             resultsBoard: { ...s.resultsBoard, [m.id]: board },
@@ -722,6 +739,21 @@ export const useGame = create<GameState>()(
       },
       setSecurityView: (securityView) => set({ securityView }),
       setLiveChecks: (v) => set((s) => ({ settings: { ...s.settings, liveChecks: v } })),
+      setDifficulty: (v) => set((s) => ({ settings: { ...s.settings, difficulty: v }, placing: null })),
+      openDebrief: (v) => {
+        const m = get().mission();
+        const results = get().results[m.id];
+        const solved = !!results?.length && results.every((r) => r.status === 'pass');
+        if (v && !solved && !m.incident && !m.diff) {
+          const a = get().assist();
+          const at = nowIso();
+          set((s) => ({
+            assists: { ...s.assists, [m.id]: { ...a, referenceAt: a.referenceAt ?? at } },
+            conceptEvidence: addEvidence(s.conceptEvidence, evidenceFor('assist', `${m.id}/review`, m.concepts, false, at, 1)),
+          }));
+        }
+        set({ debriefOpen: v, referenceOpen: null });
+      },
     }),
     {
       name: 'blast-radius',

@@ -63,6 +63,11 @@ export function TopBar() {
               <span className="n">{String(i + 1).padStart(2, '0')}</span>
               {m.title}
               <Stars n={best[m.id]?.stars ?? 0} />
+              {best[m.id]?.hardStars === 3 && (
+                <span className="tag accent hard-badge" title="Three stars in hard mode">
+                  H
+                </span>
+              )}
             </button>
           </Fragment>
         ))}

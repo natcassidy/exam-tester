@@ -75,8 +75,10 @@ function SgChips({ board, c }: { board: BoardT; c: Component }) {
   );
 }
 
+const MARK_LABEL = { extra: 'Not in the other design', missing: 'Missing from your design', changed: 'Configured differently' } as const;
+
 function Node({ c, span }: { c: Component; span?: string }) {
-  const { board, selection, select, readOnly } = useBoardView();
+  const { board, selection, select, readOnly, marks } = useBoardView();
   const highlight0 = useGame((s) => s.highlight);
   const placing0 = useGame((s) => s.placing);
   const securityView = useGame((s) => s.securityView);
@@ -89,14 +91,14 @@ function Node({ c, span }: { c: Component; span?: string }) {
   const bad = highlight.includes(c.id);
   return (
     <button
-      className={`node ${selected ? 'selected' : ''} ${bad ? 'bad' : ''} ${issues && !bad ? 'lint' : ''}`}
+      className={`node ${selected ? 'selected' : ''} ${bad ? 'bad' : ''} ${issues && !bad ? 'lint' : ''} ${marks?.[c.id] ? `mark-${marks[c.id]}` : ''}`}
       data-node-id={readOnly ? undefined : c.id}
       onClick={(e) => {
         if (placing) return;
         e.stopPropagation();
         select({ kind: 'component', id: c.id });
       }}
-      aria-label={`${SERVICES[c.type].name} ${c.name}${issues ? `. Security issue: ${issues[0].finding.message}` : ''}`}
+      aria-label={`${SERVICES[c.type].name} ${c.name}${issues ? `. Security issue: ${issues[0].finding.message}` : ''}${marks?.[c.id] ? `. ${MARK_LABEL[marks[c.id]]}` : ''}`}
       title={issues ? issues.map((i) => `⚠ ${i.rule.title}: ${i.finding.message}`).join('\n') : undefined}
     >
       <Abbr type={c.type} />

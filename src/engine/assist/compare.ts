@@ -17,6 +17,13 @@ export interface RefDifference {
   types: ServiceType[];
   /** Object on the player's board to open, when there is one. */
   playerTarget?: string;
+  /** A reference component the player has no counterpart for, one only the player has, or a setting that differs. */
+  kind?: 'missing' | 'extra' | 'changed';
+  /** The reference component the difference is about (id and name), when there is one. */
+  refId?: string;
+  refName?: string;
+  /** The config field that differs (dotted for nested settings), for config differences. */
+  field?: string;
 }
 
 const SKIP_CONFIG = new Set(['type', 'customPolicy', 'policyDoc']);
@@ -54,6 +61,7 @@ function placement(b: Board, c: Component): string {
 function token(v: unknown, toPlayer: (id: string) => string | undefined, isComponent: (id: string) => boolean): string {
   if (typeof v === 'string' && isComponent(v)) return `comp:${toPlayer(v) ?? `unpaired:${v}`}`;
   if (Array.isArray(v)) return JSON.stringify(v.map((x) => token(x, toPlayer, isComponent)));
+  if (v && typeof v === 'object') return JSON.stringify(Object.entries(v).map(([k, x]) => [k, token(x, toPlayer, isComponent)]));
   return JSON.stringify(v ?? null);
 }
 
@@ -63,7 +71,11 @@ function show(b: Board, v: unknown): string {
   if (typeof v === 'boolean') return v ? 'on' : 'off';
   if (typeof v === 'string') return b.components[v]?.name ?? v;
   if (Array.isArray(v)) return v.length ? v.map((x) => show(b, x)).join(', ') : 'none';
-  if (typeof v === 'object') return JSON.stringify(v);
+  if (typeof v === 'object')
+    return Object.entries(v as Record<string, unknown>)
+      .filter(([, x]) => x !== null && x !== undefined)
+      .map(([k, x]) => `${words(k)} ${show(b, x)}`)
+      .join(', ');
   return String(v);
 }
 
@@ -126,18 +138,31 @@ function componentDiffs(player: Board, ref: Board, rc: Component, pc: Component,
   const rSubs = subnetsOf(rc);
   const pSubs = subnetsOf(pc);
   if (rc.placement.kind !== pc.placement.kind || (rc.placement.kind !== 'subnet' && rc.placement.refId !== pc.placement.refId) || JSON.stringify([...rSubs].sort()) !== JSON.stringify([...pSubs].sort()))
-    out.push({ area: pc.name, text: `The reference puts ${rc.name} in ${placement(ref, rc)}. Yours is in ${placement(player, pc)}.`, types: [pc.type], playerTarget: pc.id });
+    out.push({ area: pc.name, text: `The reference puts ${rc.name} in ${placement(ref, rc)}. Yours is in ${placement(player, pc)}.`, types: [pc.type], playerTarget: pc.id, field: 'placement' });
   const rf = flat(rc.config as unknown as Record<string, unknown>);
   const pf = flat(pc.config as unknown as Record<string, unknown>);
   const viaPairs = (id: string) => pairs.get(id)?.id;
+  const isRef = (id: string) => !!ref.components[id];
+  const isPlayer = (id: string) => !!player.components[id];
   for (const k of Object.keys(rf)) {
-    const same = token(rf[k], viaPairs, (id) => !!ref.components[id]) === token(pf[k], (id) => id, (id) => !!player.components[id]);
-    if (!same) out.push({ area: pc.name, text: `${pc.name} ${words(k)}: the reference uses ${show(ref, rf[k])}, yours is ${show(player, pf[k])}.`, types: [pc.type], playerTarget: pc.id });
+    const [rv, pv] = [rf[k], pf[k]];
+    // Lists of settings (lifecycle transitions, DNS records, TGW route tables) compare item by item.
+    const items = (v: unknown) => Array.isArray(v) && v.some((x) => x && typeof x === 'object');
+    if (items(rv) && (items(pv) || !pv || (Array.isArray(pv) && !pv.length))) {
+      const ra = rv as unknown[];
+      const pa = (pv ?? []) as unknown[];
+      for (let i = 0; i < Math.max(ra.length, pa.length); i++)
+        if (token(ra[i], viaPairs, isRef) !== token(pa[i], (id) => id, isPlayer))
+          out.push({ area: pc.name, text: `${pc.name} ${words(k)} #${i + 1}: the reference uses ${show(ref, ra[i])}, yours is ${show(player, pa[i])}.`, types: [pc.type], playerTarget: pc.id, field: `${k}.${i}` });
+      continue;
+    }
+    const same = token(rv, viaPairs, isRef) === token(pv, (id) => id, isPlayer);
+    if (!same) out.push({ area: pc.name, text: `${pc.name} ${words(k)}: the reference uses ${show(ref, rv)}, yours is ${show(player, pv)}.`, types: [pc.type], playerTarget: pc.id, field: k });
   }
   if ((rc.roleId ? ref.iam?.roles[rc.roleId]?.name : null) !== (pc.roleId ? player.iam?.roles[pc.roleId]?.name : null))
     out.push({ area: pc.name, text: `The reference gives ${rc.name} the role ${rc.roleId ? ref.iam?.roles[rc.roleId]?.name ?? rc.roleId : 'none'}; yours has ${pc.roleId ? player.iam?.roles[pc.roleId]?.name ?? pc.roleId : 'none'}.`, types: [pc.type], playerTarget: pc.id });
-  out.push(...sgDiffs(player, ref, rc, pc));
-  return out;
+  out.push(...sgDiffs(player, ref, rc, pc).map((d) => ({ ...d, field: 'securityGroups' })));
+  return out.map((d) => ({ kind: 'changed' as const, refId: rc.id, refName: rc.name, ...d }));
 }
 
 function routeDiffs(player: Board, ref: Board): RefDifference[] {
@@ -189,17 +214,22 @@ function naclDiffs(player: Board, ref: Board): RefDifference[] {
   return out;
 }
 
+/** The player's component paired with each reference component (by id), for marking both boards. */
+export function referencePairs(player: Board, ref: Board): Map<string, string | undefined> {
+  return new Map([...pairComponents(player, ref)].map(([r, p]) => [r, p?.id]));
+}
+
 export function compareToReference(player: Board, ref: Board): RefDifference[] {
   const out: RefDifference[] = [];
   const pairs = pairComponents(player, ref);
   for (const [rid, pc] of pairs) {
     const rc = ref.components[rid];
-    if (!pc) out.push({ area: rc.name, text: `The reference has ${rc.name} (${rc.type.toUpperCase()}) in ${placement(ref, rc)}. Your board has none.`, types: [rc.type] });
+    if (!pc) out.push({ area: rc.name, text: `The reference has ${rc.name} (${rc.type.toUpperCase()}) in ${placement(ref, rc)}. Your board has none.`, types: [rc.type], kind: 'missing', refId: rc.id, refName: rc.name });
     else out.push(...componentDiffs(player, ref, rc, pc, pairs));
   }
   const paired = new Set([...pairs.values()].filter(Boolean).map((c) => c!.id));
   for (const c of Object.values(player.components))
-    if (!paired.has(c.id)) out.push({ area: c.name, text: `Your board has ${c.name} (${c.type.toUpperCase()}). The reference doesn't use one.`, types: [c.type], playerTarget: c.id });
+    if (!paired.has(c.id)) out.push({ area: c.name, text: `Your board has ${c.name} (${c.type.toUpperCase()}). The reference doesn't use one.`, types: [c.type], playerTarget: c.id, kind: 'extra' });
   out.push(...routeDiffs(player, ref), ...naclDiffs(player, ref));
   return out;
 }

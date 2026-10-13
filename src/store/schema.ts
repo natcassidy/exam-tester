@@ -1,4 +1,5 @@
 import type { Board } from '../engine/model';
+import type { Difficulty } from '../engine/palette';
 import type { Evidence } from '../engine/mastery/evidence';
 import { evidenceFor } from '../engine/mastery/evidence';
 import type { DailyPlan } from '../engine/mastery/daily';
@@ -11,6 +12,8 @@ export interface BestResult {
   stars: 0 | 1 | 2 | 3;
   points: number;
   at: string;
+  /** Best stars earned in hard mode (older saves lack the field). */
+  hardStars?: 0 | 1 | 2 | 3;
 }
 
 export interface QuestionAnswer {
@@ -24,6 +27,8 @@ export interface Settings {
   reducedMotion: boolean;
   /** Run the mission's audit checks as you edit (default on; older saves lack the field). */
   liveChecks?: boolean;
+  /** Easy offers only the services a mission needs; hard mixes in plausible extras (default easy). */
+  difficulty?: Difficulty;
 }
 
 /** Help the player asked for on a mission: hints revealed and whether they looked at the reference. */

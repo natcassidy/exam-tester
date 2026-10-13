@@ -7,7 +7,7 @@ import { pickSurprise } from '../../src/engine/mastery/surprise';
 import { MISSIONS } from '../../src/content/missions';
 import { DEFENDS } from '../../src/content/defend';
 import { MISSION_BY_ID, REFACTORS } from '../../src/content/missions';
-import { paletteFor } from '../../src/ui/board/Palette';
+import { missionPalette } from '../../src/engine/palette';
 
 const summarize = (rs: ReturnType<typeof runMission>) => rs.map((r) => `${r.eventId}: ${r.status} — ${r.summary}`).join('\n');
 
@@ -94,7 +94,7 @@ describe('defend rounds', () => {
 describe('refactor palettes', () => {
   it('offer every component type the reference adds to the production board', () => {
     for (const m of REFACTORS) {
-      const types = new Set(paletteFor(m.palette));
+      const types = new Set(missionPalette(m, 'easy'));
       const before = new Set(Object.values(m.startingBoard!.components).map((c) => c.type));
       for (const c of Object.values(m.reference.components)) if (!before.has(c.type)) expect(types.has(c.type), `${m.id}: ${c.type}`).toBe(true);
     }

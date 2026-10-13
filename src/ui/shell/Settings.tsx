@@ -3,6 +3,7 @@ import { MISSIONS } from '../../content/missions';
 import { useGame } from '../../store/game';
 import { usePrefersReducedMotion } from './useMedia';
 import { Icon } from './Icon';
+import { DifficultyToggle } from './Brief';
 
 const SHORTCUTS: [string, string][] = [
   ['Ctrl/⌘ + Z', 'Undo the last change to the board'],
@@ -74,6 +75,13 @@ export function Settings({ onClose }: { onClose: () => void }) {
             </span>
             <input type="checkbox" checked={liveChecks} onChange={(e) => setLiveChecks(e.target.checked)} />
           </label>
+          <div className="field">
+            <span>
+              Difficulty
+              <div className="hint">Easy offers only the services a mission can use. Hard mixes in plausible services the design doesn't need and hides the exam signal phrases until your first run. Applies to build and refactor missions.</div>
+            </span>
+            <DifficultyToggle />
+          </div>
           <div className="section" style={{ marginTop: 16 }}>
             <h4>Progress</h4>
             <p className="hint">Progress lives in this browser. Export it to back it up or move it to another device.</p>

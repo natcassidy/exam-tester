@@ -870,6 +870,29 @@ export interface Mission {
   diff?: DiffSpec;
   /** Stage 4 refactor missions: the requirement change and how cost is measured. */
   refactor?: RefactorSpec;
+  /** Hard mode: plausible services added to the palette that this design doesn't need. */
+  distractors?: ServiceType[];
+  /** Why a palette or distractor service the reference doesn't use is the wrong tool here. */
+  whyNot?: Partial<Record<ServiceType, string>>;
+  /** The reference design's key decisions, explained in the end-of-mission solution review. */
+  decisions?: DesignDecision[];
+}
+
+/** One choice the reference design makes, why it matters, and the checks that prove it. */
+export interface DesignDecision {
+  title: string;
+  /** What the reference does. */
+  choice: string;
+  /** Why it matters: the failure it prevents and the exam angle. */
+  why: string;
+  /** Events that fail without it. The player's result on these says whether their design covers it. */
+  events: string[];
+  /** Differences about these reference components or route tables (by name) are listed under this decision. */
+  components?: string[];
+  /** Differences about these config fields (dotted, e.g. "integration.kind") are listed here. */
+  fields?: string[];
+  /** Field Manual entries to read next. */
+  manual?: string[];
 }
 
 // ---------- Refactors (Stage 4) ----------

@@ -76,7 +76,7 @@ input[type='text'], input[type='search'], input[type='number'], select, textarea
   background: var(--bg-2); border: 1px solid var(--line-2); border-radius: 6px; padding: 5px 8px; min-width: 0;
 }
 input[type='number'] { width: 90px; }
-label.field { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px dashed var(--line); }
+label.field, div.field { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px dashed var(--line); }
 label.field > span:first-child { color: var(--muted); }
 label.field.stack { grid-template-columns: 1fr; }
 .check { display: inline-flex; align-items: center; gap: 6px; }
@@ -668,3 +668,46 @@ label.field.borrowed { background: rgba(245, 196, 81, 0.06); }
   .node.pulse, .focus-pulse { animation: none; }
 }
 .reduce-motion .node.pulse, .reduce-motion .focus-pulse { animation: none; }
+
+/* ---------- Solution review ---------- */
+.modal.review { height: 90vh; }
+.review-summary { padding: 10px 16px 4px; display: flex; flex-direction: column; gap: 4px; }
+.review-summary p { margin: 0; }
+.review-body { overflow: auto; padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 10px; min-height: 0; flex: 1; }
+.decision { border: 1px solid var(--line); border-left: 4px solid var(--line-2); border-radius: var(--r); padding: 10px 12px; background: var(--panel-2); display: flex; flex-direction: column; gap: 6px; }
+.decision.covered { border-left-color: var(--pass); }
+.decision.missed { border-left-color: var(--fail); }
+.decision-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.decision-head h3 { font-size: 15px; flex: 1; min-width: 200px; margin: 0; }
+.decision-n { color: var(--muted); font-size: 12px; }
+.decision dl { display: grid; grid-template-columns: 150px 1fr; gap: 4px 12px; margin: 0; font-size: 13px; }
+.decision dt { color: var(--muted); }
+.decision dd { margin: 0; color: #c8d3de; }
+.decision-diffs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.decision-diffs li { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; padding: 4px 8px; border-radius: 6px; background: var(--bg-2); border: 1px solid var(--line); font-size: 13px; }
+.decision-diffs li span { flex: 1; min-width: 200px; }
+.decision-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.review-section { border-top: 1px solid var(--line); padding-top: 10px; }
+.review-section h4, .review-section summary { font-size: 13px; margin-bottom: 8px; cursor: default; }
+details.review-section summary { cursor: pointer; }
+.why-not { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.why-not li { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; font-size: 13px; color: #c8d3de; }
+.review-boards { overflow: hidden; }
+.review-legend { display: flex; gap: 14px; flex-wrap: wrap; padding: 4px 12px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--line); }
+.swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; border: 2px solid; vertical-align: -2px; }
+.swatch.mark-extra, .node.mark-extra { border-color: var(--warn); border-style: dashed; }
+.swatch.mark-missing, .node.mark-missing { border-color: var(--pass); }
+.swatch.mark-changed, .node.mark-changed { border-color: var(--info); }
+.node.mark-extra, .node.mark-missing, .node.mark-changed { border-width: 2px; }
+.review-cta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; border-left-color: var(--pass) !important; }
+.review-cta p { margin: 0; flex: 1; min-width: 220px; }
+.seg { display: inline-flex; border: 1px solid var(--line-2); border-radius: 999px; overflow: hidden; }
+.seg button { background: none; border: none; padding: 3px 12px; color: var(--muted); font-size: 12px; }
+.seg button.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+@media (max-width: 900px) {
+  .modal.review { height: auto; max-height: 92vh; }
+  .decision dl { grid-template-columns: 1fr; }
+  .decision dt { margin-top: 4px; }
+  .review-boards { overflow: auto; }
+}
+.chip .hard-badge { padding: 0 5px; font-size: 10px; margin-left: 2px; }

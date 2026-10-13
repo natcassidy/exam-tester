@@ -10,6 +10,8 @@ export interface BoardView {
   idPrefix: string;
   selection: Selection | null;
   select: (s: Selection | null) => void;
+  /** Outline components that differ from another board (the solution review). */
+  marks?: Record<string, 'extra' | 'missing' | 'changed'>;
 }
 
 export const BoardViewContext = createContext<BoardView | null>(null);

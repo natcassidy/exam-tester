@@ -22,6 +22,7 @@ import { Tutorial } from './shell/Tutorial';
 import { usePrefersReducedMotion } from './shell/useMedia';
 import { TracePanel } from './trace/TracePanel';
 import { ReferenceModal } from './assist/ReferenceModal';
+import { SolutionReview } from './assist/SolutionReview';
 
 function RightPanel() {
   const selection = useGame((s) => s.selection);
@@ -175,6 +176,7 @@ export function App() {
       <DiagnoseModal />
       <FieldManual />
       <ReferenceModal />
+      <SolutionReview />
       {mode === 'build' && <Tutorial />}
       <Toasts />
     </DndContext>

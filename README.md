@@ -18,6 +18,12 @@ npm run build    # one self-contained dist/index.html that plays from file://
 
 Every failed check says what is wrong on *your* board, what it should be, and how to fix it. **Fix it** opens the exact object, on the right tab, and highlights the field or rule to change; a pinned banner keeps the instruction in view. Failures sort first in the results drawer and stale results are flagged after an edit. When that isn't enough, **Stuck?** reveals the mission's hints one at a time and then a plain-language comparison with the reference design (hints cost an investigation action in incidents, and every assist counts as a "not yet" for its concepts in spaced repetition). The board toolbar has undo/redo (Ctrl/⌘+Z), an undoable reset, live security checks, and a **Security view** that draws which security group lets which tier in and marks borrowed groups.
 
+## Easy and hard, and the solution review
+
+Build and refactor missions come in two difficulties (switch in the brief or in Settings). **Easy** offers only the services the mission can use. **Hard** mixes four to six plausible services the design doesn't need into the palette, and hides the exam signal phrases until your first run, so picking the right tools is part of the puzzle. Three stars in hard mode earn the mission chip an **H**.
+
+After a run, **Solution review** (or **See the solution** before every check passes, which counts as help) shows the reference design's key decisions, each with what the reference does, why it matters and the checks that prove it, marked ✓ (your design handles it), ✗ (it doesn't, with exactly where your board differs) or = (you match the reference; another decision explains the failure). A side-by-side tab outlines what's missing, extra or set up differently on both boards, and every service the reference skipped comes with a "why not". The content lives in `src/content/solutions.ts`; `tests/content/solutions.test.ts` checks that every distractor can be placed, every mistake board is blamed on the decision that actually differs, and no difference goes unexplained.
+
 No backend and no network calls at runtime. Progress lives in IndexedDB (falling back to localStorage) and can be exported/imported as JSON from the top bar.
 
 ## Layout
@@ -28,6 +34,7 @@ No backend and no network calls at runtime. Progress lives in IndexedDB (falling
 - `src/store/` — Zustand store, persistence and schema migrations.
 - `src/ui/` — React UI (board, console, tracer, sim drawer, manual, questions, incident tools, IAM editor, diff view, concept map, daily session, Defend rounds, exam mode, tutorial and settings).
 - `tests/content/fixes.test.ts` — every failure on every mistake, incident and wrong-fix board carries a fix hint, a target that exists and a focus label the console renders.
+- `e2e/review.spec.ts` — easy and hard palettes, and the solution review on a solved and a failing board, including a phone-width check.
 - `e2e/unstuck.spec.ts` — replays stuck scenarios in Chromium (the load balancer's security group on the app tier, the hint ladder, undo/redo, the Security view) and counts the clicks to recover.
 - `tests/content/missions.test.ts` — validates every build mission: the reference board scores 3 stars, the empty board fails, and each listed mistake fails exactly the expected events.
 - `tests/content/incidents.test.ts` — each incident's starting board fails with exactly its symptom, the reference fix passes with no collateral, and every listed wrong fix fails or is flagged.
