@@ -4,6 +4,7 @@
 // (same name first).
 
 import type { Board, Component, SecurityGroup, ServiceType, SgRule } from '../model';
+import type { PolicyDocument, Statement } from '../iam/types';
 import { subnetsOf } from '../board';
 import { findSubnet, targetId, targetKind } from '../net/routing';
 import { sgHomes, sgLender, sgPorts } from '../net/sg';
@@ -130,6 +131,16 @@ function sgDiffs(player: Board, ref: Board, rc: Component, pc: Component): RefDi
   for (const p of pRules)
     if (!rRules.some((r) => r.key === p.key))
       out.push({ area: `${pc.name} · inbound`, text: `${p.sg.name} on ${pc.name} allows ${p.text}. The reference has no such rule.`, types: [pc.type], playerTarget: p.sg.id });
+  // Outbound rules: "from" reads as "to" here.
+  const rOut = rSgs.flatMap((sg) => sg.outbound.map((r) => ({ sg, ...ruleInRoles(ref, r) })));
+  const pOut = pSgs.flatMap((sg) => sg.outbound.map((r) => ({ sg, ...ruleInRoles(player, r) })));
+  const to = (t: string) => t.replace(' from ', ' to ');
+  for (const r of rOut)
+    if (!pOut.some((p) => p.key === r.key))
+      out.push({ area: `${pc.name} · outbound`, text: `The reference lets ${rc.name} send ${to(r.text)}. Nothing on ${pc.name} allows that.`, types: [pc.type], playerTarget: pSgs[0]?.id ?? pc.id, field: 'securityGroups.outbound' });
+  for (const p of pOut)
+    if (!rOut.some((r) => r.key === p.key))
+      out.push({ area: `${pc.name} · outbound`, text: `${p.sg.name} on ${pc.name} allows ${to(p.text)} out. The reference has no such rule.`, types: [pc.type], playerTarget: p.sg.id, field: 'securityGroups.outbound' });
   return out;
 }
 
@@ -161,7 +172,11 @@ function componentDiffs(player: Board, ref: Board, rc: Component, pc: Component,
   }
   if ((rc.roleId ? ref.iam?.roles[rc.roleId]?.name : null) !== (pc.roleId ? player.iam?.roles[pc.roleId]?.name : null))
     out.push({ area: pc.name, text: `The reference gives ${rc.name} the role ${rc.roleId ? ref.iam?.roles[rc.roleId]?.name ?? rc.roleId : 'none'}; yours has ${pc.roleId ? player.iam?.roles[pc.roleId]?.name ?? pc.roleId : 'none'}.`, types: [pc.type], playerTarget: pc.id });
-  out.push(...sgDiffs(player, ref, rc, pc).map((d) => ({ ...d, field: 'securityGroups' })));
+  out.push(...sgDiffs(player, ref, rc, pc).map((d) => ({ ...d, field: d.field ?? 'securityGroups.inbound' })));
+  const rDoc = rc.config.type === 's3' ? rc.config.customPolicy : rc.config.type === 'sqs' ? rc.config.policyDoc : undefined;
+  const pDoc = pc.config.type === 's3' ? pc.config.customPolicy : pc.config.type === 'sqs' ? pc.config.policyDoc : undefined;
+  const field = rc.type === 's3' ? 'customPolicy' : 'policyDoc';
+  if ((rc.type === 's3' || rc.type === 'sqs') && docKey(rDoc) !== docKey(pDoc)) out.push(...docDiffs(`${pc.name} · ${rc.type === 's3' ? 'bucket' : 'queue'} policy`, rDoc, pDoc).map((t) => ({ area: pc.name, text: t, types: [pc.type], playerTarget: pc.id, field })));
   return out.map((d) => ({ kind: 'changed' as const, refId: rc.id, refName: rc.name, ...d }));
 }
 
@@ -214,6 +229,70 @@ function naclDiffs(player: Board, ref: Board): RefDifference[] {
   return out;
 }
 
+// ----- Policies -----
+
+const list = (v: string | string[] | undefined) => (v === undefined ? [] : Array.isArray(v) ? [...v].sort() : [v]);
+
+/** A statement in one line: "Allow s3:GetObject on arn:aws:s3:::reports/*". */
+function stmtText(s: Statement): string {
+  const who = s.Principal === undefined ? '' : s.Principal === '*' ? ' for anyone' : ` for ${[...list(s.Principal.AWS), ...list(s.Principal.Service)].join(', ')}`;
+  const what = s.Action !== undefined ? list(s.Action).join(', ') : `everything except ${list(s.NotAction).join(', ')}`;
+  const on = s.Resource !== undefined ? list(s.Resource).join(', ') : s.NotResource !== undefined ? `everything except ${list(s.NotResource).join(', ')}` : '';
+  const when = s.Condition ? ` when ${JSON.stringify(s.Condition)}` : '';
+  return `${s.Effect} ${what}${on ? ` on ${on}` : ''}${who}${when}`;
+}
+
+const docKey = (d: PolicyDocument | null | undefined) => (d ? d.Statement.map(stmtText).sort().join(' | ') : '');
+
+/** Statements one document has and the other doesn't, in words. */
+function docDiffs(what: string, ref: PolicyDocument | null | undefined, player: PolicyDocument | null | undefined): string[] {
+  const r = (ref?.Statement ?? []).map(stmtText);
+  const p = (player?.Statement ?? []).map(stmtText);
+  const out: string[] = [];
+  for (const x of r) if (!p.includes(x)) out.push(`${what}: the reference has "${x}". Yours doesn't.`);
+  for (const x of p) if (!r.includes(x)) out.push(`${what}: yours has "${x}". The reference doesn't.`);
+  return out;
+}
+
+/** Roles and users (matched by name), their policies, boundaries and trust; KMS key policies (by alias); SCPs. */
+function iamDiffs(player: Board, ref: Board): RefDifference[] {
+  const out: RefDifference[] = [];
+  const rIam = ref.iam;
+  const pIam = player.iam;
+  const rRoles = Object.values(rIam?.roles ?? {});
+  const pRoles = Object.values(pIam?.roles ?? {});
+  const diff = (refName: string, text: string, playerTarget?: string, kind: RefDifference['kind'] = 'changed'): RefDifference => ({ area: refName, text, types: [], playerTarget, kind, refName });
+  for (const r of rRoles) {
+    const p = pRoles.find((x) => x.name === r.name && x.kind === r.kind);
+    if (!p) {
+      out.push(diff(r.name, `The reference has the ${r.kind} ${r.name}${r.policies.length ? ` (${r.policies.map((x) => x.name).join(', ')})` : ''}. Your board has none.`, undefined, 'missing'));
+      continue;
+    }
+    for (const rp of r.policies) {
+      const pp = p.policies.find((x) => x.name === rp.name);
+      if (!pp && p.policies.length === 1 && r.policies.length === 1) out.push(...docDiffs(`${r.name} · ${p.policies[0].name}`, rp.doc, p.policies[0].doc).map((t) => diff(r.name, t, p.id)));
+      else if (!pp) out.push(diff(r.name, `The reference gives ${r.name} the policy ${rp.name}: ${rp.doc.Statement.map(stmtText).join('; ')}. Yours has no policy by that name.`, p.id));
+      else if (docKey(rp.doc) !== docKey(pp.doc)) out.push(...docDiffs(`${r.name} · ${rp.name}`, rp.doc, pp.doc).map((t) => diff(r.name, t, p.id)));
+    }
+    if (!(p.policies.length === 1 && r.policies.length === 1))
+      for (const pp of p.policies) if (!r.policies.some((x) => x.name === pp.name)) out.push(diff(r.name, `${r.name} has the policy ${pp.name}: ${pp.doc.Statement.map(stmtText).join('; ')}. The reference doesn't.`, p.id));
+    if (docKey(r.boundary) !== docKey(p.boundary)) out.push(...docDiffs(`${r.name} · permissions boundary`, r.boundary, p.boundary).map((t) => diff(r.name, t, p.id)));
+    if (docKey(r.trust) !== docKey(p.trust)) out.push(...docDiffs(`${r.name} · trust policy`, r.trust, p.trust).map((t) => diff(r.name, t, p.id)));
+  }
+  for (const p of pRoles) if (!rRoles.some((r) => r.name === p.name && r.kind === p.kind)) out.push({ area: p.name, text: `Your board has the ${p.kind} ${p.name}. The reference doesn't.`, types: [], playerTarget: p.id, kind: 'extra' });
+  for (const k of Object.values(rIam?.keys ?? {})) {
+    const p = Object.values(pIam?.keys ?? {}).find((x) => x.alias === k.alias);
+    if (!p) out.push(diff(k.alias, `The reference has the KMS key ${k.alias}. Your board has none.`, undefined, 'missing'));
+    else if (docKey(k.policy) !== docKey(p.policy)) out.push(...docDiffs(`key ${k.alias} · key policy`, k.policy, p.policy).map((t) => diff(k.alias, t, p.id)));
+  }
+  const scps = (b: Board) => (b.iam?.scps ?? []).flatMap((x) => x.doc.Statement);
+  const rScp = scps(ref).map(stmtText);
+  const pScp = scps(player).map(stmtText);
+  for (const x of rScp) if (!pScp.includes(x)) out.push(diff('SCPs', `SCPs: the reference has "${x}". Yours doesn't.`));
+  for (const x of pScp) if (!rScp.includes(x)) out.push(diff('SCPs', `SCPs: yours has "${x}". The reference doesn't.`));
+  return out;
+}
+
 /** The player's component paired with each reference component (by id), for marking both boards. */
 export function referencePairs(player: Board, ref: Board): Map<string, string | undefined> {
   return new Map([...pairComponents(player, ref)].map(([r, p]) => [r, p?.id]));
@@ -230,7 +309,7 @@ export function compareToReference(player: Board, ref: Board): RefDifference[] {
   const paired = new Set([...pairs.values()].filter(Boolean).map((c) => c!.id));
   for (const c of Object.values(player.components))
     if (!paired.has(c.id)) out.push({ area: c.name, text: `Your board has ${c.name} (${c.type.toUpperCase()}). The reference doesn't use one.`, types: [c.type], playerTarget: c.id, kind: 'extra' });
-  out.push(...routeDiffs(player, ref), ...naclDiffs(player, ref));
+  out.push(...routeDiffs(player, ref), ...naclDiffs(player, ref), ...iamDiffs(player, ref));
   return out;
 }
 

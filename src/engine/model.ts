@@ -876,6 +876,18 @@ export interface Mission {
   whyNot?: Partial<Record<ServiceType, string>>;
   /** The reference design's key decisions, explained in the end-of-mission solution review. */
   decisions?: DesignDecision[];
+  /** Course Labs: the course section this lab tests, and how it starts. */
+  course?: CourseInfo;
+}
+
+/** Where a Course Lab sits in the course, and what kind of exercise it is. */
+export interface CourseInfo {
+  /** Section number in the course (1-33). */
+  section: number;
+  /** fix: a pre-built board with something broken; finish: partly built; build: an empty board. */
+  kind: 'fix' | 'finish' | 'build';
+  /** Lectures to revisit if the lab is hard going. */
+  lectures: string[];
 }
 
 /** One choice the reference design makes, why it matters, and the checks that prove it. */
