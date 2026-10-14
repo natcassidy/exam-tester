@@ -18,9 +18,13 @@ npm run build    # one self-contained dist/index.html that plays from file://
 
 Every failed check says what is wrong on *your* board, what it should be, and how to fix it. **Fix it** opens the exact object, on the right tab, and highlights the field or rule to change; a pinned banner keeps the instruction in view. Failures sort first in the results drawer and stale results are flagged after an edit. When that isn't enough, **Stuck?** reveals the mission's hints one at a time and then a plain-language comparison with the reference design (hints cost an investigation action in incidents, and every assist counts as a "not yet" for its concepts in spaced repetition). The board toolbar has undo/redo (Ctrl/⌘+Z), an undoable reset, live security checks, and a **Security view** that draws which security group lets which tier in and marks borrowed groups.
 
+## Finding a mission
+
+**All** at the start of the mission row opens an index of every mission in every mode: Build and Refactor missions and Incidents by stage, Spot the Difference rounds, and all Course Labs by course section, each with its stars and a done count per group. Search finds any mission by title, client or course section across all modes, and picking one jumps straight to it.
+
 ## Course Labs
 
-**Course Labs** (top bar) follows the sections of the SAA-C03 video course, so you can test each section right after watching it. Pick a section from the drop-down and play its one to three labs. Each lab is tagged:
+**Course Labs** (top bar) follows the sections of the SAA-C03 video course, so you can test each section right after watching it. The arrows beside the section name step to the previous or next section, and clicking the section name lists every section and its labs. Each section has one to three labs. Each lab is tagged:
 
 - **fix**: the board is already built and something on it is broken.
 - **finish**: the board is half-built; keep what works and add what is missing.

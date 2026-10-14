@@ -22,6 +22,7 @@ const PATHS: Record<string, string> = {
   warn: 'M12 4 2.5 20h19L12 4z M12 10v4 M12 17v.5',
   play: 'M7 5v14l11-7L7 5z',
   close: 'M6 6l12 12 M18 6 6 18',
+  list: 'M9 6h11 M9 12h11 M9 18h11 M4 6h.01 M4 12h.01 M4 18h.01',
 };
 
 export type IconName = keyof typeof PATHS;
