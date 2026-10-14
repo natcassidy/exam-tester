@@ -1,5 +1,6 @@
 import { Fragment, useState } from 'react';
 import { ALL_MISSIONS } from '../../content/missions';
+import { COURSE, COURSE_SECTIONS } from '../../content/course';
 import { streak } from '../../engine/mastery/daily';
 import { dailyComplete, localDay, Mode, modeOf, useGame } from '../../store/game';
 import { Settings } from './Settings';
@@ -10,6 +11,7 @@ const MODES: { id: Mode; label: string; short: string }[] = [
   { id: 'incident', label: 'Incidents', short: 'Incidents' },
   { id: 'diff', label: 'Spot the Difference', short: 'Diff' },
   { id: 'refactor', label: 'Refactor', short: 'Refactor' },
+  { id: 'course', label: 'Course Labs', short: 'Labs' },
 ];
 import { Stars } from './Abbr';
 
@@ -19,6 +21,8 @@ const DIVIDER: Record<number, { label: string; title: string }> = {
   4: { label: 'Cost', title: 'Stage 4: refactor for cost' },
 };
 
+const COURSE_KIND = { fix: 'Fix: the board is built, but broken', finish: 'Finish: the board is partly built', build: 'Build: start from an empty board' };
+
 export function TopBar() {
   const current = useGame((s) => s.currentMissionId);
   const best = useGame((s) => s.best);
@@ -27,7 +31,8 @@ export function TopBar() {
   const select = useGame((s) => s.select);
   const mission = useGame((s) => s.mission());
   const mode = modeOf(mission);
-  const missions = ALL_MISSIONS.filter((m) => modeOf(m) === mode);
+  // Course Labs show one section at a time: a section picker, then that section's labs.
+  const missions = mode === 'course' ? COURSE.filter((m) => m.course!.section === mission.course?.section) : ALL_MISSIONS.filter((m) => modeOf(m) === mode);
   const openManual = useGame((s) => s.openManual);
   const openTrace = useGame((s) => s.openTrace);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -52,15 +57,38 @@ export function TopBar() {
         ))}
       </div>
       <nav className="chips" aria-label="Missions">
+        {mode === 'course' && (
+          <select
+            className="section-pick"
+            aria-label="Course section"
+            value={mission.course?.section}
+            onChange={(e) => {
+              const first = COURSE.find((m) => m.course!.section === Number(e.target.value));
+              if (first) setMission(first.id);
+            }}
+          >
+            {COURSE_SECTIONS.map((s) => {
+              const labs = COURSE.filter((m) => m.course!.section === s.n);
+              const done = labs.filter((m) => (best[m.id]?.stars ?? 0) === 3).length;
+              return (
+                <option key={s.n} value={s.n} disabled={!labs.length} title={s.skip}>
+                  {s.n}. {s.title}
+                  {labs.length ? ` (${done}/${labs.length})` : ' (no labs)'}
+                </option>
+              );
+            })}
+          </select>
+        )}
         {missions.map((m, i) => (
           <Fragment key={m.id}>
-            {i > 0 && m.stage !== missions[i - 1].stage && (
+            {mode !== 'course' && i > 0 && m.stage !== missions[i - 1].stage && (
               <span className="chip-divider" aria-hidden>
                 {DIVIDER[m.stage]?.label ?? `Stage ${m.stage}`}
               </span>
             )}
-            <button className={`chip ${m.id === current ? 'active' : ''}`} onClick={() => setMission(m.id)} aria-current={m.id === current} title={m.stage > 1 ? DIVIDER[m.stage]?.title : undefined}>
+            <button className={`chip ${m.id === current ? 'active' : ''}`} onClick={() => setMission(m.id)} aria-current={m.id === current} title={m.course ? COURSE_KIND[m.course.kind] : m.stage > 1 ? DIVIDER[m.stage]?.title : undefined}>
               <span className="n">{String(i + 1).padStart(2, '0')}</span>
+              {m.course && <span className={`tag kind-${m.course.kind}`}>{m.course.kind}</span>}
               {m.title}
               <Stars n={best[m.id]?.stars ?? 0} />
               {best[m.id]?.hardStars === 3 && (

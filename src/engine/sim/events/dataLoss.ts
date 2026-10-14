@@ -111,9 +111,27 @@ function dbWays(board: Board, db: Component, p: DataLossParams): Way[] {
     if (cfg.type === 'dynamodb')
       ways.push(cfg.pitr ? { ok: true, rpoSec: 1, line: 'Point-in-time recovery: restore the table to any second in the last 35 days.' } : { ok: false, rpoSec: Infinity, line: 'Point-in-time recovery is off.' });
   }
+  if (p.scenario === 'region-loss') {
+    const home = regionOf(board, db);
+    if (cfg.type === 'dynamodb' && cfg.replicaRegions?.some((r) => r !== home)) ways.push({ ok: true, rpoSec: 1, line: `Global table replicas in ${cfg.replicaRegions.join(', ')} hold every item, replicated within about a second.` });
+    for (const bk of backupsOf(board, db))
+      ways.push(bk.config.copyRegion && bk.config.copyRegion !== home ? { ok: true, rpoSec: bk.config.frequencyHours * 3600, line: `${bk.name} copies recovery points to ${bk.config.copyRegion} (up to ${bk.config.frequencyHours} h old).` } : { ok: false, rpoSec: Infinity, line: `${bk.name} keeps its recovery points in ${home} only, so they are lost with the Region.` });
+    if (!ways.length) ways.push({ ok: false, rpoSec: Infinity, line: `Every copy of ${db.name} lives in ${home}.` });
+    return ways;
+  }
   for (const bk of backupsOf(board, db)) {
     const ok = bk.config.retentionDays * 24 >= hours && (p.scenario !== 'malicious-delete' || bk.config.vaultLock === 'compliance' || bk.config.copyToOtherAccount);
-    ways.push({ ok, rpoSec: bk.config.frequencyHours * 3600, line: `${bk.name}: recovery points every ${bk.config.frequencyHours} h, kept ${bk.config.retentionDays} days.` });
+    const exposed = p.scenario === 'malicious-delete' && bk.config.vaultLock !== 'compliance' && !bk.config.copyToOtherAccount;
+    const short = bk.config.retentionDays * 24 < hours;
+    ways.push({
+      ok,
+      rpoSec: bk.config.frequencyHours * 3600,
+      line: exposed
+        ? `${bk.name}: an administrator can delete the recovery points (no compliance-mode Vault Lock, no copy in a separate account).`
+        : short
+          ? `${bk.name}: recovery points are kept ${bk.config.retentionDays} day(s), but the damage is ${hours} h old.`
+          : `${bk.name}: recovery points every ${bk.config.frequencyHours} h, kept ${bk.config.retentionDays} days.`,
+    });
   }
   return ways;
 }

@@ -51,7 +51,7 @@ export type Selection =
   | { kind: 'key'; id: string }
   | { kind: 'scp' };
 
-export type Mode = 'build' | 'incident' | 'diff' | 'refactor';
+export type Mode = 'build' | 'incident' | 'diff' | 'refactor' | 'course';
 
 export interface Toast {
   id: number;
@@ -223,6 +223,7 @@ function startBoardFor(m: Mission): Board {
 }
 
 export function modeOf(m: Mission): Mode {
+  if (m.course) return 'course';
   return m.mode === 'incident' ? 'incident' : m.mode === 'diff' ? 'diff' : m.mode === 'refactor' ? 'refactor' : 'build';
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MISSIONS, REFACTORS, INCIDENTS, DIFFS } from '../../src/content/missions';
+import { MISSIONS, REFACTORS, INCIDENTS, DIFFS, COURSE } from '../../src/content/missions';
 import { MANUAL } from '../../src/content/manual';
 import { createBoardFromLayout, placeComponent, validatePlacement } from '../../src/engine/board';
 import type { Board, Mission, Placement, ServiceType } from '../../src/engine/model';
@@ -7,7 +7,10 @@ import { runMission } from '../../src/engine/sim/runner';
 import { buildDebrief } from '../../src/engine/assist/debrief';
 import { missionPalette } from '../../src/engine/palette';
 
-const PLAYABLE = [...MISSIONS, ...REFACTORS];
+const PLAYABLE = [...MISSIONS, ...REFACTORS, ...COURSE];
+// Course Labs are smaller than missions: fewer decisions and distractors are enough.
+const minDecisions = (m: Mission) => (m.course ? 2 : 3);
+const minDistractors = (m: Mission) => (m.course ? 3 : 4);
 
 /** Every zone on a board, so a test can find somewhere a service is allowed to go. */
 function zones(b: Board): Placement[] {
@@ -26,10 +29,17 @@ const zoneFor = (b: Board, t: ServiceType, m: Mission) => zones(b).find((z) => !
 
 describe.each(PLAYABLE.map((m) => [m.id, m] as const))('solution review for %s', (_id, m: Mission) => {
   const refTypes = new Set(Object.values(m.reference.components).map((c) => c.type));
-  const refNames = new Set([...Object.values(m.reference.components).map((c) => c.name), ...Object.values(m.reference.routeTables).map((rt) => rt.name)]);
+  const refNames = new Set([
+    ...Object.values(m.reference.components).map((c) => c.name),
+    ...Object.values(m.reference.routeTables).map((rt) => rt.name),
+    ...Object.values(m.reference.nacls).map((n) => n.name),
+    ...Object.values(m.reference.iam?.roles ?? {}).map((r) => r.name),
+    ...Object.values(m.reference.iam?.keys ?? {}).map((k) => k.alias),
+    ...(m.reference.iam?.scps.length ? ['SCPs'] : []),
+  ]);
 
   it('has key decisions that point at real events, components and manual entries', () => {
-    expect(m.decisions?.length ?? 0).toBeGreaterThanOrEqual(3);
+    expect(m.decisions?.length ?? 0).toBeGreaterThanOrEqual(minDecisions(m));
     for (const d of m.decisions!) {
       expect(d.events.length, d.title).toBeGreaterThan(0);
       for (const e of d.events) expect(m.events.map((x) => x.id), `${d.title}: ${e}`).toContain(e);
@@ -46,7 +56,7 @@ describe.each(PLAYABLE.map((m) => [m.id, m] as const))('solution review for %s',
   it('hard mode adds placeable distractors the reference does not use', () => {
     const easy = missionPalette(m, 'easy');
     const hard = missionPalette(m, 'hard');
-    expect(m.distractors!.length).toBeGreaterThanOrEqual(4);
+    expect(m.distractors!.length).toBeGreaterThanOrEqual(minDistractors(m));
     expect(hard.length).toBe(easy.length + m.distractors!.length);
     const board = createBoardFromLayout(m.layout);
     for (const t of m.distractors!) {

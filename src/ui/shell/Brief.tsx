@@ -3,6 +3,13 @@ import { refactorBaselines, useGame } from '../../store/game';
 import { refactorCost } from '../../engine/scoring';
 import { StuckLadder } from '../assist/StuckLadder';
 import { hasHardMode } from '../../engine/palette';
+import { sectionOf } from '../../content/course';
+
+const KIND_TEXT = {
+  fix: 'Fix it: this board is already built, and something on it is broken. Run the checks, find what fails, and repair it with the smallest change.',
+  finish: 'Finish it: this board is partly built. Keep what works and add or configure what is missing.',
+  build: 'Build it: start from an empty board.',
+};
 
 /** Easy / hard switch: hard mixes services the design doesn't need into the palette. */
 export function DifficultyToggle() {
@@ -40,6 +47,20 @@ export function Brief() {
       </div>
       <div className="panel-body brief">
         <p>“{mission.brief}”</p>
+        {mission.course && (
+          <div className="section change course">
+            <h4>
+              Course section {mission.course.section}: {sectionOf(mission)?.title}
+            </h4>
+            <p>{KIND_TEXT[mission.course.kind]}</p>
+            <p className="hint">Lectures to revisit if you get stuck:</p>
+            <ul className="hint">
+              {mission.course.lectures.map((l) => (
+                <li key={l}>{l}</li>
+              ))}
+            </ul>
+          </div>
+        )}
         {mission.refactor && (
           <div className="section change">
             <h4>What changed</h4>
@@ -121,7 +142,7 @@ export function Brief() {
           )}
         </div>
         <button className="btn small ghost danger" onClick={() => (!mission.incident || confirm('Restart this incident? Your board, actions and diagnosis are cleared (your best score is kept).')) && resetBoard()}>
-          {mission.incident ? 'Restart incident' : mission.refactor ? 'Restore the production board' : 'Reset board'}
+          {mission.incident ? 'Restart incident' : mission.refactor ? 'Restore the production board' : mission.startingBoard ? 'Restore the starting board' : 'Reset board'}
         </button>
       </div>
     </>

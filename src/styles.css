@@ -711,3 +711,13 @@ details.review-section summary { cursor: pointer; }
   .review-boards { overflow: auto; }
 }
 .chip .hard-badge { padding: 0 5px; font-size: 10px; margin-left: 2px; }
+
+/* Course Labs: section picker and the fix / finish / build tag on each lab chip. */
+.section-pick { flex: none; width: 200px; max-width: 200px; text-overflow: ellipsis; border-radius: 999px; padding: 4px 10px; font-size: 13px; }
+.chip .tag.kind-fix { color: var(--fail); border-color: rgba(255, 93, 93, 0.4); }
+.chip .tag.kind-finish { color: var(--warn); border-color: rgba(245, 196, 81, 0.4); }
+.chip .tag.kind-build { color: var(--pass); border-color: rgba(63, 214, 143, 0.4); }
+.section.course ul { margin: 4px 0 0; padding-left: 18px; }
+@media (max-width: 900px) {
+  .section-pick { max-width: 62vw; }
+}
