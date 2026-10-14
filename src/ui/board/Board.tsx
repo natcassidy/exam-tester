@@ -155,7 +155,10 @@ function SubnetCell({ s, col, reserve, children }: { s: Subnet; col: number; res
             <span className="mono">{s.cidr}</span>
             <span className={`tag ${status.isPublic ? 'public' : 'private'}`}>{status.isPublic ? 'Public' : 'Private'}</span>
           </button>
-          <div className="hint" style={{ fontSize: 11, marginTop: 2 }}>{status.reason}</div>
+          <div className="hint" style={{ fontSize: 11, marginTop: 2 }}>
+            {status.reason}
+            {!readOnly && !status.isPublic && ' · click the name to edit routes'}
+          </div>
           <div className="subnet-body">{children}</div>
           {reserve && reserve.length > 0 && <SpanSpacer comps={reserve} />}
         </div>

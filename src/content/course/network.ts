@@ -87,7 +87,7 @@ export const pentestLab = lab({
 });
 
 // =====================================================================================
-// 27a. A VPC from scratch (build, bare): IGW, public and private routes, a NAT gateway.
+// 27a. A VPC from scratch (finish, bare): IGW, public and private routes, a NAT gateway.
 // =====================================================================================
 
 function emptyVpc(): VpcSpec {
@@ -127,12 +127,12 @@ const nat = (b: BoardBuilder) => b.place('nat', 'public-a', { name: 'scratch-nat
 
 export const vpcBuildLab = lab({
   id: 'c-vpc-build',
-  course: { section: 27, kind: 'build', lectures: ['Internet Gateways & Route Tables', 'NAT Gateways', 'Bastion Hosts', 'VPC - Section Summary'] },
+  course: { section: 27, kind: 'finish', lectures: ['Internet Gateways & Route Tables', 'NAT Gateways', 'Bastion Hosts', 'VPC - Section Summary'] },
   title: 'A VPC from scratch',
   client: 'Pelican Print, an online print shop',
   users: 'A public web server and a private worker that downloads fonts and print profiles',
   brief:
-    "Our VPC has subnets and two servers, and nothing else: no way in, no way out. The web server must be reachable on HTTPS from the internet. The worker in the private subnet must download updates from the internet over HTTPS, but nothing on the internet may ever connect to it. Defaults are bare here: you wire every gateway and route yourself.",
+    "Our VPC has subnets and two servers, and nothing else: no way in, no way out. The web server must be reachable on HTTPS from the internet. The worker in the private subnet must download updates from the internet over HTTPS, but nothing on the internet may ever connect to it. Defaults are bare here: you wire every gateway and route yourself. Click a subnet's name to open its route table.",
   requirements: [
     { id: 'r1', text: 'Customers reach the web server on 443' },
     { id: 'r2', text: 'The worker can download from the internet' },
@@ -143,6 +143,7 @@ export const vpcBuildLab = lab({
   defaults: 'bare',
   layout: scratchLayout,
   palette: ['ec2', 'igw', 'nat', 'vpce'],
+  start: { board: servers().done(), fails: ['web', 'updates'] },
   events: [
     { id: 'web', name: 'A customer opens the shop', desc: 'HTTPS from the internet to the web server.', domain: 'secure', concepts: ['internet-gateway', 'vpc-public-private'], kind: 'reachability', params: { from: 'internet', to: '"web"', port: 443, expect: 'allow', label: { to: 'the web server' } }, requirementIds: ['r1'] },
     { id: 'updates', name: 'The worker fetches fonts', desc: 'The worker opens HTTPS to a font server on the internet.', domain: 'secure', concepts: ['nat-gateway'], kind: 'reachability', params: { from: '"worker"', to: 'internet', port: 443, expect: 'allow', expectVia: 'nat', label: { from: 'the worker', to: 'the internet' } }, requirementIds: ['r2'] },
@@ -156,7 +157,7 @@ export const vpcBuildLab = lab({
     { name: 'NAT gateway placed, private route table left empty', board: igw(servers()).place('nat', 'public-a', { name: 'scratch-nat' }).done(), expectFail: ['updates'] },
   ],
   keywords: ['public subnet = route table with 0.0.0.0/0 → internet gateway', 'private instances reach the internet through a NAT gateway in a public subnet', 'NAT gateway is AZ-scoped and needs an IGW route', 'NAT gateways allow outbound only'],
-  hints: ['A gateway that attaches the VPC to the internet', 'Routes in rtb-public', 'Outbound-only internet for the private subnet, placed in a public subnet'],
+  hints: ['A gateway that attaches the VPC to the internet', 'Click public-a\'s name to open rtb-public, and add 0.0.0.0/0 → the internet gateway. Only then is the subnet public', 'Outbound-only internet for the private subnet: a NAT gateway in a public subnet, and a 0.0.0.0/0 route to it in rtb-private'],
   distractors: ['alb', 'rds', 's3'],
   whyNot: { vpce: 'A gateway endpoint reaches S3 and DynamoDB privately. The worker downloads from a third-party server on the internet, which needs NAT.' },
   decisions: [

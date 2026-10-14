@@ -351,7 +351,9 @@ export function validatePlacement(board: Board, type: ServiceType, zone: Placeme
   }
   if (zone.kind === 'subnet' && !findSubnet(board, zone.refId)) return 'Unknown subnet.';
   if (type === 'nat' && zone.kind === 'subnet' && !isPublicSubnet(board, zone.refId)) {
-    return 'A public NAT gateway must be placed in a public subnet: one whose route table sends 0.0.0.0/0 to an internet gateway. It needs that route to reach the internet on behalf of private subnets.';
+    const f = findSubnet(board, zone.refId)!;
+    const rt = board.routeTables[f.subnet.routeTableId]?.name ?? 'its route table';
+    return `A public NAT gateway must be placed in a public subnet: one whose route table sends 0.0.0.0/0 to an internet gateway. ${f.subnet.name} isn't public yet: click its name and add 0.0.0.0/0 → the internet gateway to ${rt} first.`;
   }
   if (type === 'igw') {
     const existing = componentsOfType(board, 'igw').find((c) => c.placement.refId === zone.refId);
