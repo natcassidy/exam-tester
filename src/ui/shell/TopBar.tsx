@@ -1,27 +1,11 @@
-import { Fragment, useState } from 'react';
-import { ALL_MISSIONS } from '../../content/missions';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { COURSE, COURSE_SECTIONS } from '../../content/course';
 import { streak } from '../../engine/mastery/daily';
-import { dailyComplete, localDay, Mode, modeOf, useGame } from '../../store/game';
+import { dailyComplete, localDay, modeOf, useGame } from '../../store/game';
 import { Settings } from './Settings';
 import { Icon } from './Icon';
-
-const MODES: { id: Mode; label: string; short: string }[] = [
-  { id: 'build', label: 'Build', short: 'Build' },
-  { id: 'incident', label: 'Incidents', short: 'Incidents' },
-  { id: 'diff', label: 'Spot the Difference', short: 'Diff' },
-  { id: 'refactor', label: 'Refactor', short: 'Refactor' },
-  { id: 'course', label: 'Course Labs', short: 'Labs' },
-];
 import { Stars } from './Abbr';
-
-const DIVIDER: Record<number, { label: string; title: string }> = {
-  2: { label: 'Stage 2', title: 'Stage 2: investigation' },
-  3: { label: 'Breadth', title: 'Stage 3: breadth (multi-Region, hybrid, storage, data)' },
-  4: { label: 'Cost', title: 'Stage 4: refactor for cost' },
-};
-
-const COURSE_KIND = { fix: 'Fix: the board is built, but broken', finish: 'Finish: the board is partly built', build: 'Build: start from an empty board' };
+import { COURSE_KIND, DIVIDER, missionsOf, MODES } from './missionGroups';
 
 export function TopBar() {
   const current = useGame((s) => s.currentMissionId);
@@ -31,8 +15,19 @@ export function TopBar() {
   const select = useGame((s) => s.select);
   const mission = useGame((s) => s.mission());
   const mode = modeOf(mission);
-  // Course Labs show one section at a time: a section picker, then that section's labs.
-  const missions = mode === 'course' ? COURSE.filter((m) => m.course!.section === mission.course?.section) : ALL_MISSIONS.filter((m) => modeOf(m) === mode);
+  // Course Labs show one section at a time; the mission index lists every section.
+  const missions = mode === 'course' ? COURSE.filter((m) => m.course!.section === mission.course?.section) : missionsOf(mode);
+  const all = missionsOf(mode);
+  const allDone = all.filter((m) => (best[m.id]?.stars ?? 0) === 3).length;
+  const openIndex = useGame((s) => s.openIndex);
+  const section = COURSE_SECTIONS.find((s) => s.n === mission.course?.section);
+  // Neighbouring sections that have labs, for the previous / next section buttons.
+  const labSections = COURSE_SECTIONS.filter((s) => COURSE.some((m) => m.course!.section === s.n));
+  const sectionAt = labSections.findIndex((s) => s.n === section?.n);
+  const goSection = (n: number | undefined) => {
+    const first = n === undefined ? undefined : COURSE.find((m) => m.course!.section === n);
+    if (first) setMission(first.id);
+  };
   const openManual = useGame((s) => s.openManual);
   const openTrace = useGame((s) => s.openTrace);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -42,6 +37,17 @@ export function TopBar() {
   const examRunning = useGame((s) => !!s.currentExam());
   const todayDone = useGame((s) => dailyComplete(s.daily[localDay()]));
   const days = useGame((s) => streak(Object.keys(s.daily).filter((d) => dailyComplete(s.daily[d])), localDay()));
+
+  // Keep the current mission's chip in view when the row scrolls.
+  const chips = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const nav = chips.current;
+    const chip = nav?.querySelector<HTMLElement>('.chip.active');
+    const lead = nav?.querySelector<HTMLElement>('.chips-lead');
+    if (!nav || !chip) return;
+    const left = chip.offsetLeft - (lead?.offsetWidth ?? 0) - 12;
+    if (left < nav.scrollLeft || chip.offsetLeft + chip.offsetWidth > nav.scrollLeft + nav.clientWidth) nav.scrollTo({ left: Math.max(0, left) });
+  }, [current]);
 
   return (
     <header className="topbar">
@@ -56,29 +62,25 @@ export function TopBar() {
           </button>
         ))}
       </div>
-      <nav className="chips" aria-label="Missions">
-        {mode === 'course' && (
-          <select
-            className="section-pick"
-            aria-label="Course section"
-            value={mission.course?.section}
-            onChange={(e) => {
-              const first = COURSE.find((m) => m.course!.section === Number(e.target.value));
-              if (first) setMission(first.id);
-            }}
-          >
-            {COURSE_SECTIONS.map((s) => {
-              const labs = COURSE.filter((m) => m.course!.section === s.n);
-              const done = labs.filter((m) => (best[m.id]?.stars ?? 0) === 3).length;
-              return (
-                <option key={s.n} value={s.n} disabled={!labs.length} title={s.skip}>
-                  {s.n}. {s.title}
-                  {labs.length ? ` (${done}/${labs.length})` : ' (no labs)'}
-                </option>
-              );
-            })}
-          </select>
-        )}
+      <nav className="chips" aria-label="Missions" ref={chips}>
+        <span className="chips-lead">
+          <button className="chip index-btn" onClick={() => openIndex(mode)} title="Every mission in every mode, grouped, with your progress" aria-haspopup="dialog">
+            <Icon name="list" /> All <span className="n">{allDone}/{all.length}</span>
+          </button>
+          {mode === 'course' && section && (
+            <span className="section-nav">
+              <button className="btn ghost small" onClick={() => goSection(labSections[sectionAt - 1]?.n)} disabled={sectionAt <= 0} aria-label="Previous course section" title="Previous section">
+                <Icon name="chevronLeft" />
+              </button>
+              <button className="chip section-pick" onClick={() => openIndex('course')} aria-label={`Course section ${section.n}: ${section.title}. Show all sections`} title="Show every course section and its labs">
+                <span className="n">§{section.n}</span> {section.title}
+              </button>
+              <button className="btn ghost small" onClick={() => goSection(labSections[sectionAt + 1]?.n)} disabled={sectionAt < 0 || sectionAt >= labSections.length - 1} aria-label="Next course section" title="Next section">
+                <Icon name="chevronRight" />
+              </button>
+            </span>
+          )}
+        </span>
         {missions.map((m, i) => (
           <Fragment key={m.id}>
             {mode !== 'course' && i > 0 && m.stage !== missions[i - 1].stage && (
