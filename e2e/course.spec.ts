@@ -110,3 +110,38 @@ test('A VPC from scratch: make a subnet public from its route table, then place 
   await page.getByLabel('Subnet public-a').click();
   await expect(nodes.filter({ hasText: /nat/i })).toHaveCount(1);
 });
+
+test('Guardrails that block the builders: edit the SCP and add a boundary, all from the IAM view', async ({ page }) => {
+  await page.addInitScript(() => {
+    if (!sessionStorage.getItem('seeded')) {
+      localStorage.setItem('blast-radius', JSON.stringify({ state: { schemaVersion: 4, currentMissionId: 'c-iam-guardrails', settings: { reducedMotion: true }, tutorial: { done: true, step: 0 } }, version: 4 }));
+      sessionStorage.setItem('seeded', '1');
+    }
+  });
+  await page.goto('/');
+  const chip = page.getByRole('navigation', { name: 'Missions' }).getByRole('button', { name: /Guardrails that block the builders/ });
+  await expect(chip).toHaveAccessibleName(/0 of 3 stars/);
+
+  // SCPs are edited from the IAM view, as the organization's administrator.
+  const setDoc = async (editor: import('@playwright/test').Locator, json: unknown) => {
+    await editor.locator('.cm-content').click();
+    await page.keyboard.press('ControlOrMeta+a');
+    await page.keyboard.insertText(JSON.stringify(json, null, 2));
+    await editor.getByRole('button', { name: 'Save policy' }).click();
+  };
+  await page.getByRole('button', { name: 'IAM', exact: true }).click();
+  await page.getByRole('button', { name: /attached to this account/ }).click();
+  const guard = page.locator('details.policy-block', { hasText: 'region-guardrail' }).locator('.policy-editor');
+  await setDoc(guard, { Version: '2012-10-17', Statement: [{ Sid: 'DenyOutsideEuWest1', Effect: 'Deny', NotAction: ['iam:*', 'sts:*', 'organizations:*'], Resource: '*', Condition: { StringNotEquals: { 'aws:RequestedRegion': 'eu-west-1' } } }] });
+  await expect(page.locator('.policy-errors')).toHaveCount(0);
+
+  // A permissions boundary caps the CI role without touching its admin policy.
+  await page.getByRole('button', { name: 'IAM', exact: true }).click();
+  await page.locator('.iam-row', { hasText: 'ci-deployer' }).click();
+  await page.getByRole('button', { name: '+ Set a boundary' }).click();
+  const boundary = page.locator('.section', { hasText: 'Permissions boundary' }).locator('.policy-editor');
+  await setDoc(boundary, { Version: '2012-10-17', Statement: [{ Sid: 'AppServicesOnly', Effect: 'Allow', Action: ['s3:*', 'dynamodb:*', 'lambda:*', 'cloudformation:*'], Resource: '*' }] });
+  await expect(page.locator('.policy-errors')).toHaveCount(0);
+  await page.getByRole('button', { name: /Run simulation/ }).click();
+  await expect(chip).toHaveAccessibleName(/3 of 3 stars/);
+});

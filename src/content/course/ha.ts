@@ -50,7 +50,7 @@ export const healthChecksLab = lab({
     { name: 'Grace period shorter than the app takes to boot', board: boxOffice().config('web-asg', { healthCheckGraceSec: 30 }).done(), expectFail: ['crash'] },
   ],
   keywords: ['all targets unhealthy → health check path/port vs what the app serves', 'ASG health check type ELB replaces instances the load balancer marks unhealthy', 'EC2 status checks only see the instance, not the app', 'grace period ≥ boot time'],
-  hints: ['Compare the target group\'s health check path with what the app serves', 'Which health checks does the Auto Scaling group act on?', 'Give new instances time to boot before judging them'],
+  hints: ['Compare the target group\'s health check path with what the app serves', 'Which health checks does the Auto Scaling group act on?', 'The 300 s grace period already gives new instances time to boot: keep it when the group starts acting on the load balancer'],
   distractors: ['route53', 'nat', 'rds'],
   whyNot: { ec2: 'A lone instance has nobody to replace it. The Auto Scaling group is what turns a failed health check into a new instance.' },
   decisions: [

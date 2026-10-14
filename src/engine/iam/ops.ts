@@ -77,6 +77,16 @@ export function setKeyPolicy(board0: Board, keyId: string, doc: PolicyDocument):
   return { ok: true, board };
 }
 
+/** Edit a service control policy, as the organization's management account would. FullAWSAccess-style policies stay required for anything to be allowed. */
+export function setScp(board0: Board, name: string, doc: PolicyDocument): OpResult {
+  if (!iamOf(board0).scps.some((p) => p.name === name)) return { ok: false, error: 'Unknown SCP.' };
+  const e = check(doc, 'scp');
+  if (e) return { ok: false, error: e };
+  const board = withIam(board0);
+  board.iam!.scps = board.iam!.scps.map((p) => (p.name === name ? { name, doc: clone(doc) } : p));
+  return { ok: true, board };
+}
+
 export function createKey(board0: Board, key: KmsKey): OpResult {
   const e = check(key.policy, 'resource');
   if (e) return { ok: false, error: e };
