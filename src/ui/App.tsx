@@ -19,6 +19,7 @@ import { DailySession } from './mastery/DailySession';
 import { DefendModal } from './mastery/Defend';
 import { ExamMode } from './mastery/ExamMode';
 import { Tutorial } from './shell/Tutorial';
+import { MissionIndex } from './shell/MissionIndex';
 import { usePrefersReducedMotion } from './shell/useMedia';
 import { TracePanel } from './trace/TracePanel';
 import { ReferenceModal } from './assist/ReferenceModal';
@@ -82,7 +83,7 @@ export function App() {
       const t = e.target as HTMLElement | null;
       if (t && (t.closest('input, textarea, select, [contenteditable="true"], .cm-editor') || t.isContentEditable)) return;
       const s = useGame.getState();
-      if (s.examOpen || s.dailyOpen || s.questionsOpen || s.defend) return;
+      if (s.examOpen || s.dailyOpen || s.questionsOpen || s.defend || s.indexOpen) return;
       e.preventDefault();
       if (k === 'y' || e.shiftKey) s.redo();
       else s.undo();
@@ -96,6 +97,7 @@ export function App() {
       if (e.key !== 'Escape') return;
       const s = useGame.getState();
       if (s.manualOpen) return s.openManual(null);
+      if (s.indexOpen) return s.openIndex(null);
       if (s.defend) return s.openDefend(null);
       if (s.questionsOpen) return s.openQuestions(false);
       if (s.examOpen) return s.openExam(false);
@@ -168,6 +170,7 @@ export function App() {
       )}
       <DragOverlay dropAnimation={null}>{dragType ? <PaletteOverlayItem type={dragType} /> : null}</DragOverlay>
       <ConceptMap />
+      <MissionIndex />
       <DailySession />
       <ExamMode />
       <Questions />

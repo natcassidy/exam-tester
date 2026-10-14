@@ -107,6 +107,8 @@ interface UiState {
   /** Incident report from the latest "Verify fix", per mission. */
   reports: Record<string, IncidentScore>;
   lastByMode: Partial<Record<Mode, string>>;
+  /** Mission index: null (closed), or the mode whose missions it lists. */
+  indexOpen: Mode | null;
   // ----- Stage 4 -----
   /** Concept map: null (closed), 'index', or a concept id to show. */
   mapOpen: string | null;
@@ -138,6 +140,7 @@ interface Actions {
   board: () => Board;
   setMission: (id: string) => void;
   setMode: (m: Mode) => void;
+  openIndex: (m: Mode | null) => void;
   incident: () => IncidentProgress;
   /** Charge an investigation action once per key (incident missions only). */
   charge: (key: string, label: string) => void;
@@ -299,6 +302,7 @@ export const useGame = create<GameState>()(
       diagnoseOpen: false,
       reports: {},
       lastByMode: {},
+      indexOpen: null,
       mapOpen: null,
       dailyOpen: false,
       examOpen: false,
@@ -343,6 +347,7 @@ export const useGame = create<GameState>()(
         const id = get().lastByMode[mode] ?? ALL_MISSIONS.find((m) => modeOf(m) === mode)!.id;
         get().setMission(id);
       },
+      openIndex: (indexOpen) => set({ indexOpen }),
 
       incident: () => get().incidents[get().mission().id] ?? NO_PROGRESS,
       charge: (key, label) => {
