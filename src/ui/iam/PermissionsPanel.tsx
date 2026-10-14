@@ -208,14 +208,15 @@ export function KeyView({ id }: { id: string }) {
 
 export function ScpView() {
   const board = useGame((s) => s.board());
+  const apply = useGame((s) => s.apply);
   const iam = iamOf(board);
   return (
     <>
-      <p className="hint">SCPs are set in the organization's management account. They never grant anything; they cap what any principal in this account can do, including the root user. Read-only here.</p>
+      <p className="hint">SCPs are set in the organization's management account; here you edit them as its administrator. They never grant anything; they cap what any principal in this account can do, including the root user.</p>
       {iam.scps.map((p) => (
         <details key={p.name} className="policy-block" open>
           <summary className="mono">{p.name}</summary>
-          <PolicyEditor doc={p.doc} kind="scp" readOnly />
+          <PolicyEditor doc={p.doc} kind="scp" onSave={(d) => !!d && apply((b) => iamOps.setScp(b, p.name, d), `SCP ${p.name} saved.`)} />
         </details>
       ))}
     </>

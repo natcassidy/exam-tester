@@ -55,7 +55,7 @@ export const pentestLab = lab({
     { name: 'Everything but the database encryption', board: hardened().config('patients-db', { storageEncrypted: false }).done(), expectFail: ['encryption'] },
   ],
   keywords: ['SQL injection, XSS, bad bots, rate limiting → AWS WAF on ALB, API Gateway or CloudFront', 'DDoS → Shield (Advanced for 24/7 response team)', 'admin access → Session Manager instead of SSH from 0.0.0.0/0', 'encrypt an existing RDS instance: snapshot → encrypted copy → restore'],
-  hints: ['A web ACL only protects what it is associated with', 'Look at portal-asg\'s inbound rules', 'The database has a storage encryption setting'],
+  hints: ['A web ACL only protects what it is associated with', 'Select portal-asg and look at the inbound rules of the security group it wears', 'The database has a storage encryption setting'],
   distractors: ['nat', 'vpce', 's3'],
   whyNot: { cloudfront: 'CloudFront could carry the web ACL too, but the portal has no global audience and the existing ACL can attach to the load balancer directly.' },
   decisions: [

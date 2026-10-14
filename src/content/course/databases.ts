@@ -195,7 +195,7 @@ export const dbPortLab = lab({
     { name: 'Also allowed the load balancer "just in case"', board: pgRef().sgRule('catalog-db', 'inbound', { protocol: 'tcp', fromPort: 5432, toPort: 5432, source: { sgOf: 'app-alb' } }).done(), expectFail: ['audit'] },
   ],
   keywords: ['ports: 22 SSH, 3389 RDP, 80/443 HTTP(S), 3306 MySQL/Aurora MySQL/MariaDB, 5432 PostgreSQL, 1433 SQL Server, 1521 Oracle', 'timeout → security group', 'source = the app tier security group'],
-  hints: ['Which port does PostgreSQL listen on?', 'Look at catalog-db\'s inbound rule', 'Keep the app tier\'s group as the source'],
+  hints: ['Which port does PostgreSQL listen on?', 'Select catalog-db and look at the inbound rule of its security group', 'Keep the app tier\'s group as the source'],
   distractors: ['nat', 'ec2', 'aurora'],
   decisions: [
     {
